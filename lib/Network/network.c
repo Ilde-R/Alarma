@@ -24,10 +24,16 @@ static char s_device_key[NETWORK_DEVICE_KEY_MAX_LEN] = "";
 static char s_device_name[NETWORK_DEVICE_NAME_MAX_LEN] = "";
 static char s_ip[NETWORK_IP_STR_LEN] = "0.0.0.0";
 
-static uint32_t s_sta_disconnects = 0;
+static uint32_t s_sta_network_fails = 0;
 static uint32_t s_sta_backoff_ms = 2000;
 static network_rescue_cb_t s_rescue_cb = NULL;
 static bool s_rescue_notified = false;
+
+static bool reason_is_network_failure(uint8_t reason) {
+    return reason == WIFI_REASON_NO_AP_FOUND ||
+           reason == WIFI_REASON_AUTH_FAIL ||
+           reason == WIFI_REASON_HANDSHAKE_TIMEOUT;
+}
 
 static const char* reason_str(uint8_t reason) {
     switch (reason) {
@@ -90,32 +96,38 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         wifi_event_sta_disconnected_t* event = (wifi_event_sta_disconnected_t*) event_data;
         s_status = NETWORK_CONNECTING;
 
-        s_sta_disconnects++;
         uint32_t backoff = s_sta_backoff_ms;
         s_sta_backoff_ms = s_sta_backoff_ms * 2;
         if (s_sta_backoff_ms > 30000) {
             s_sta_backoff_ms = 30000;
         }
 
-        ESP_LOGW(TAG, "Disconnected from router. Reason: %d (%s). Reconnect %lu. Retrying in %lu ms...",
-                 event->reason, reason_str(event->reason),
-                 (unsigned long) s_sta_disconnects, (unsigned long) backoff);
+        ESP_LOGW(TAG, "Disconnected from router. Reason: %d (%s). Retrying in %lu ms...",
+                 event->reason, reason_str(event->reason), (unsigned long) backoff);
         vTaskDelay(pdMS_TO_TICKS(backoff));
         esp_wifi_connect();
 
-        if (s_sta_disconnects >= NETWORK_MAX_STA_DISCONNECTS && !s_rescue_notified) {
-            s_rescue_notified = true;
-            ESP_LOGW(TAG, "Demasiadas desconexiones (%lu). Abriendo portal de rescate...",
-                     (unsigned long) s_sta_disconnects);
-            if (s_rescue_cb != NULL) {
-                s_rescue_cb();
+        if (reason_is_network_failure(event->reason)) {
+            s_sta_network_fails++;
+            ESP_LOGW(TAG, "Fallo de red/credenciales %lu/%d. Reintentando sin abrir portal...",
+                     (unsigned long) s_sta_network_fails, NETWORK_MAX_STA_NETWORK_FAILS);
+            if (s_sta_network_fails >= NETWORK_MAX_STA_NETWORK_FAILS && !s_rescue_notified) {
+                s_rescue_notified = true;
+                ESP_LOGW(TAG, "La red guardada ya no es alcanzable (%lu fallos). Abriendo portal de provisionamiento...",
+                         (unsigned long) s_sta_network_fails);
+                if (s_rescue_cb != NULL) {
+                    s_rescue_cb();
+                }
             }
+        } else {
+            ESP_LOGW(TAG, "Desconexion transitoria (no es fallo de red). No se abrira el portal.");
         }
     } 
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         s_status = NETWORK_CONNECTED;
-        s_sta_disconnects = 0;
+        s_sta_network_fails = 0;
+        s_rescue_notified = false;
         s_sta_backoff_ms = 2000;
         snprintf(s_ip, NETWORK_IP_STR_LEN, IPSTR, IP2STR(&event->ip_info.ip));
         ESP_LOGI(TAG, "Successfully connected! Assigned IP: %s", s_ip);

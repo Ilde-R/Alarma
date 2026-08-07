@@ -20,7 +20,8 @@
 
 #define BACKEND_TAG "BACKEND"
 
-#define BACKEND_HOST "farm-backend.fly.dev"
+#define BACKEND_HOST "farm-backend-dev.fly.dev" // PRUEBAS
+// #define BACKEND_HOST "farm-backend.fly.dev"
 #define BACKEND_PORT 443
 #define BACKEND_CONNECT_TIMEOUT_MS 10000
 #define BACKEND_POLL_TIMEOUT_MS 50
@@ -36,7 +37,6 @@
 #define BACKEND_DEFAULT_SCALE 25000.0f
 #define BACKEND_DEFAULT_INTERVAL_MS 1000
 
-#define MAX_INTENTOS_WS 5
 #define WS_RECONNECT_INITIAL_MS 1000
 #define WS_RECONNECT_MAX_MS 30000
 
@@ -53,8 +53,7 @@ static esp_transport_handle_t s_ws = NULL;
 static esp_transport_handle_t s_ssl = NULL;
 static volatile bool s_connected = false;
 static bool s_credenciales_invalidadas = false;
-static bool s_diag_ap_active = false;
-static int s_intentos_ws = 0;
+static bool s_reprovisioning = false;
 static unsigned long s_ws_reconnect_ms = WS_RECONNECT_INITIAL_MS;
 
 static uint32_t s_intervalo_ms = BACKEND_DEFAULT_INTERVAL_MS;
@@ -223,7 +222,7 @@ static void nvs_save_config(void) {
     nvs_close(handle);
 }
 
-static bool ws_send_text(const char* payload) {
+static bool ws_send_frame(uint8_t opcode, const char* payload) {
     if (s_ws == NULL || s_ssl == NULL || !s_connected) {
         return false;
     }
@@ -236,7 +235,7 @@ static bool ws_send_text(const char* payload) {
 
     uint8_t frame[6];
     size_t hlen = 0;
-    frame[hlen++] = 0x81;
+    frame[hlen++] = 0x80 | opcode;
     if (len <= 125) {
         frame[hlen++] = 0x80 | (uint8_t) len;
     } else {
@@ -279,6 +278,10 @@ static bool ws_send_text(const char* payload) {
         off += n;
     }
     return true;
+}
+
+static bool ws_send_text(const char* payload) {
+    return ws_send_frame(WS_TRANSPORT_OPCODES_TEXT, payload);
 }
 
 static void ws_send_pressure(int64_t ts_ms) {
@@ -333,27 +336,6 @@ static void ws_close(void) {
     s_connected = false;
 }
 
-static void diag_ap_start(void) {
-    if (s_diag_ap_active || s_credenciales_invalidadas) {
-        return;
-    }
-    ESP_LOGW(BACKEND_TAG, "Activando AP de diagnostico en paralelo (AP_STA)...");
-    if (network_ap_start(WIFI_MODE_APSTA) == ESP_OK && provision_http_start() == ESP_OK) {
-        s_diag_ap_active = true;
-        ESP_LOGI(BACKEND_TAG, "AP diagnostico activo: '%s' | POST /configure", NETWORK_AP_SSID);
-    }
-}
-
-static void diag_ap_stop(void) {
-    if (!s_diag_ap_active) {
-        return;
-    }
-    ESP_LOGI(BACKEND_TAG, "Conexion recuperada. Desactivando AP diagnostico.");
-    provision_http_stop();
-    network_ap_stop();
-    s_diag_ap_active = false;
-}
-
 static esp_err_t ws_connect(void) {
     if (s_device_key[0] == '\0') {
         ESP_LOGE(BACKEND_TAG, "Sin device key. No se puede conectar.");
@@ -378,6 +360,11 @@ static esp_err_t ws_connect(void) {
     snprintf(path, sizeof(path), "/?key=%s", s_device_key);
     esp_transport_ws_set_path(s_ws, path);
 
+    esp_transport_ws_config_t ws_cfg = {
+        .propagate_control_frames = true,
+    };
+    esp_transport_ws_set_config(s_ws, &ws_cfg);
+
     char headers[192];
     snprintf(headers, sizeof(headers), "key: %s\r\nOrigin: https://%s\r\n",
              s_device_key, BACKEND_HOST);
@@ -398,7 +385,6 @@ static esp_err_t ws_connect(void) {
         return ESP_FAIL;
     }
 
-    s_intentos_ws = 0;
     s_ws_reconnect_ms = WS_RECONNECT_INITIAL_MS;
     s_connected = true;
     return ESP_OK;
@@ -420,7 +406,15 @@ static int ws_read_message(char* buf, int max_len) {
         return 0;
     }
     buf[len] = '\0';
-    if (esp_transport_ws_get_read_opcode(s_ws) != WS_TRANSPORT_OPCODES_TEXT) {
+    ws_transport_opcodes_t opcode = esp_transport_ws_get_read_opcode(s_ws);
+    if (opcode == WS_TRANSPORT_OPCODES_PING) {
+        ws_send_frame(0x0A, buf);
+        return 0;
+    }
+    if (opcode == WS_TRANSPORT_OPCODES_CLOSE) {
+        return -2;
+    }
+    if (opcode != WS_TRANSPORT_OPCODES_TEXT) {
         return 0;
     }
     return len;
@@ -476,15 +470,14 @@ static void backend_task(void* arg) {
             esp_restart();
         }
 
+        if (s_reprovisioning) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
         if (!s_connected) {
             if (ws_connect() != ESP_OK) {
-                s_intentos_ws++;
-                ESP_LOGW(BACKEND_TAG, "Fallo de conexion %d/%d. Reintento en %lu ms",
-                         s_intentos_ws, MAX_INTENTOS_WS, s_ws_reconnect_ms);
-                if (s_intentos_ws >= MAX_INTENTOS_WS) {
-                    s_intentos_ws = 0;
-                    diag_ap_start();
-                }
+                ESP_LOGW(BACKEND_TAG, "Fallo de conexion. Reintento en %lu ms", s_ws_reconnect_ms);
                 vTaskDelay(pdMS_TO_TICKS(s_ws_reconnect_ms));
                 s_ws_reconnect_ms *= 2;
                 if (s_ws_reconnect_ms > WS_RECONNECT_MAX_MS) {
@@ -493,7 +486,6 @@ static void backend_task(void* arg) {
                 continue;
             }
 
-            diag_ap_stop();
             ESP_LOGI(BACKEND_TAG, "WebSocket conectado a %s", BACKEND_HOST);
 
             char payload[128];
@@ -509,6 +501,13 @@ static void backend_task(void* arg) {
         if (s_connected) {
             char buf[BACKEND_WS_READ_BUF];
             int len = ws_read_message(buf, sizeof(buf));
+            if (len == -2) {
+                ESP_LOGW(BACKEND_TAG, "El servidor cerro la conexion (CLOSE frame). Abriendo red de reconfiguracion...");
+                ws_close();
+                provision_start();
+                s_reprovisioning = true;
+                continue;
+            }
             if (len < 0) {
                 ESP_LOGW(BACKEND_TAG, "Conexion WS perdida. Reconectando...");
                 ws_close();
