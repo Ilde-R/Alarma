@@ -4,6 +4,7 @@
 #include "esp_wifi.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "network.h"
 #include "provision.h"
 
@@ -108,6 +109,7 @@ static esp_err_t configure_handler(httpd_req_t* req) {
 }
 
 esp_err_t provision_start(void) {
+    esp_netif_create_default_wifi_ap();
     esp_wifi_stop();
 
     wifi_config_t ap_config = {
@@ -122,7 +124,7 @@ esp_err_t provision_start(void) {
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
     ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(40)); // 10 dBm: evita fallos de auth en ESP32-C3
+    ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(34)); // 8.5 dBm: evita fallos de RF en ESP32-C3
 
     vTaskDelay(pdMS_TO_TICKS(500));
 
