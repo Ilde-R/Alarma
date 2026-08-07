@@ -12,6 +12,7 @@
 #define NVS_KEY_SSID "ssid"
 #define NVS_KEY_PASS "pass"
 #define NVS_KEY_DEVICE_KEY "device_key"
+#define NVS_KEY_DEVICE_NAME "name"
 
 static const char* TAG = "WIFI_MODULE";
 
@@ -20,6 +21,7 @@ static bool s_has_creds = false;
 static char s_ssid[NETWORK_SSID_MAX_LEN] = "";
 static char s_pass[NETWORK_PASS_MAX_LEN] = "";
 static char s_device_key[NETWORK_DEVICE_KEY_MAX_LEN] = "";
+static char s_device_name[NETWORK_DEVICE_NAME_MAX_LEN] = "";
 static char s_ip[NETWORK_IP_STR_LEN] = "0.0.0.0";
 
 static uint32_t s_sta_disconnects = 0;
@@ -61,9 +63,16 @@ static esp_err_t nvs_load_credentials(void) {
 
     len = sizeof(s_device_key);
     err = nvs_get_str(handle, NVS_KEY_DEVICE_KEY, s_device_key, &len);
+    if (err != ESP_OK) {
+        nvs_close(handle);
+        return err;
+    }
+
+    len = sizeof(s_device_name);
+    err = nvs_get_str(handle, NVS_KEY_DEVICE_NAME, s_device_name, &len);
     nvs_close(handle);
     if (err != ESP_OK) {
-        return err;
+        s_device_name[0] = '\0';
     }
 
     s_has_creds = (s_ssid[0] != '\0' && s_device_key[0] != '\0');
@@ -177,7 +186,19 @@ const char* network_get_device_key(void) {
     return s_device_key;
 }
 
-esp_err_t network_save_credentials(const char* ssid, const char* pass, const char* device_key) {
+const char* network_get_device_name(void) {
+    return s_device_name;
+}
+
+const char* network_get_ssid(void) {
+    return s_ssid;
+}
+
+const char* network_get_pass(void) {
+    return s_pass;
+}
+
+esp_err_t network_save_credentials(const char* ssid, const char* pass, const char* device_key, const char* device_name) {
     if (ssid == NULL || device_key == NULL || ssid[0] == '\0' || device_key[0] == '\0') {
         return ESP_ERR_INVALID_ARG;
     }
@@ -196,6 +217,9 @@ esp_err_t network_save_credentials(const char* ssid, const char* pass, const cha
         err = nvs_set_str(handle, NVS_KEY_DEVICE_KEY, device_key);
     }
     if (err == ESP_OK) {
+        err = nvs_set_str(handle, NVS_KEY_DEVICE_NAME, device_name ? device_name : "");
+    }
+    if (err == ESP_OK) {
         err = nvs_commit(handle);
     }
     nvs_close(handle);
@@ -204,6 +228,7 @@ esp_err_t network_save_credentials(const char* ssid, const char* pass, const cha
         strncpy(s_ssid, ssid, sizeof(s_ssid) - 1);
         strncpy(s_pass, pass ? pass : "", sizeof(s_pass) - 1);
         strncpy(s_device_key, device_key, sizeof(s_device_key) - 1);
+        strncpy(s_device_name, device_name ? device_name : "", sizeof(s_device_name) - 1);
         s_has_creds = true;
     }
     return err;
@@ -218,12 +243,14 @@ esp_err_t network_clear_credentials(void) {
     nvs_erase_key(handle, NVS_KEY_SSID);
     nvs_erase_key(handle, NVS_KEY_PASS);
     nvs_erase_key(handle, NVS_KEY_DEVICE_KEY);
+    nvs_erase_key(handle, NVS_KEY_DEVICE_NAME);
     err = nvs_commit(handle);
     nvs_close(handle);
 
     s_ssid[0] = '\0';
     s_pass[0] = '\0';
     s_device_key[0] = '\0';
+    s_device_name[0] = '\0';
     s_has_creds = false;
     s_status = NETWORK_NEEDS_PROVISIONING;
     return err;

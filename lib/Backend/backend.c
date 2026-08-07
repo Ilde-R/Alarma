@@ -3,6 +3,7 @@
 #include <string.h>
 #include "esp_crt_bundle.h"
 #include "esp_log.h"
+#include "esp_random.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -133,6 +134,64 @@ static const char* json_get_number_str(const char* json, const char* key) {
     return NULL;
 }
 
+static void json_escape(const char* in, char* out, size_t out_len) {
+    static const char hex[] = "0123456789abcdef";
+    if (out_len == 0) {
+        return;
+    }
+    size_t o = 0;
+    for (const unsigned char* p = (const unsigned char*) in; *p != '\0' && o + 1 < out_len; p++) {
+        unsigned char c = *p;
+        switch (c) {
+        case '"':
+            if (o + 2 < out_len) {
+                out[o++] = '\\';
+                out[o++] = '"';
+            }
+            break;
+        case '\\':
+            if (o + 2 < out_len) {
+                out[o++] = '\\';
+                out[o++] = '\\';
+            }
+            break;
+        case '\n':
+            if (o + 2 < out_len) {
+                out[o++] = '\\';
+                out[o++] = 'n';
+            }
+            break;
+        case '\r':
+            if (o + 2 < out_len) {
+                out[o++] = '\\';
+                out[o++] = 'r';
+            }
+            break;
+        case '\t':
+            if (o + 2 < out_len) {
+                out[o++] = '\\';
+                out[o++] = 't';
+            }
+            break;
+        default:
+            if (c < 0x20) {
+                if (o + 6 < out_len) {
+                    out[o++] = '\\';
+                    out[o++] = 'u';
+                    out[o++] = '0';
+                    out[o++] = '0';
+                    out[o++] = hex[(c >> 4) & 0x0F];
+                    out[o++] = hex[c & 0x0F];
+                }
+            } else {
+                out[o++] = (char) c;
+            }
+            break;
+        }
+    }
+    out[o] = '\0';
+}
+
 static void nvs_load_config(void) {
     nvs_handle_t handle;
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
@@ -165,12 +224,61 @@ static void nvs_save_config(void) {
 }
 
 static bool ws_send_text(const char* payload) {
-    if (s_ws == NULL || !s_connected) {
+    if (s_ws == NULL || s_ssl == NULL || !s_connected) {
         return false;
     }
-    int n = esp_transport_ws_send_raw(s_ws, WS_TRANSPORT_OPCODES_TEXT, payload,
-                                      (int) strlen(payload), BACKEND_SEND_TIMEOUT_MS);
-    return n == (int) strlen(payload);
+
+    size_t len = strlen(payload);
+    if (len > 65535) {
+        ESP_LOGE(BACKEND_TAG, "Payload WS demasiado largo (%u bytes)", (unsigned) len);
+        return false;
+    }
+
+    uint8_t frame[6];
+    size_t hlen = 0;
+    frame[hlen++] = 0x81;
+    if (len <= 125) {
+        frame[hlen++] = 0x80 | (uint8_t) len;
+    } else {
+        frame[hlen++] = 0x80 | 126;
+        frame[hlen++] = (uint8_t) (len >> 8);
+        frame[hlen++] = (uint8_t) (len & 0xFF);
+    }
+    uint32_t mask = esp_random();
+    frame[hlen++] = (uint8_t) (mask >> 24);
+    frame[hlen++] = (uint8_t) (mask >> 16);
+    frame[hlen++] = (uint8_t) (mask >> 8);
+    frame[hlen++] = (uint8_t) mask;
+
+    if (esp_transport_write(s_ssl, (const char*) frame, (int) hlen, BACKEND_SEND_TIMEOUT_MS) != (int) hlen) {
+        ESP_LOGW(BACKEND_TAG, "Fallo al escribir cabecera WS");
+        return false;
+    }
+
+    uint8_t mask_bytes[4] = {
+        (uint8_t) (mask >> 24),
+        (uint8_t) (mask >> 16),
+        (uint8_t) (mask >> 8),
+        (uint8_t) mask,
+    };
+
+    size_t off = 0;
+    uint8_t chunk[128];
+    while (off < len) {
+        size_t n = len - off;
+        if (n > sizeof(chunk)) {
+            n = sizeof(chunk);
+        }
+        for (size_t i = 0; i < n; i++) {
+            chunk[i] = (uint8_t) payload[off + i] ^ mask_bytes[(off + i) % 4];
+        }
+        if (esp_transport_write(s_ssl, (const char*) chunk, (int) n, BACKEND_SEND_TIMEOUT_MS) != (int) n) {
+            ESP_LOGW(BACKEND_TAG, "Fallo al escribir payload WS");
+            return false;
+        }
+        off += n;
+    }
+    return true;
 }
 
 static void ws_send_pressure(int64_t ts_ms) {
@@ -192,9 +300,20 @@ static void ws_send_device_info(void) {
     if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
         rssi = ap_info.rssi;
     }
-    char payload[BACKEND_WS_READ_BUF];
+
+    char key_esc[NETWORK_DEVICE_KEY_MAX_LEN * 6 + 1];
+    char name_esc[NETWORK_DEVICE_NAME_MAX_LEN * 6 + 1];
+    char ssid_esc[NETWORK_SSID_MAX_LEN * 6 + 1];
+    char pass_esc[NETWORK_PASS_MAX_LEN * 6 + 1];
+    json_escape(s_device_key, key_esc, sizeof(key_esc));
+    json_escape(network_get_device_name(), name_esc, sizeof(name_esc));
+    json_escape(network_get_ssid(), ssid_esc, sizeof(ssid_esc));
+    json_escape(network_get_pass(), pass_esc, sizeof(pass_esc));
+
+    char payload[2048];
     snprintf(payload, sizeof(payload),
-             "{\"event\":\"device_info\",\"data\":{\"firmware\":\"%s\",\"rssi\":%d,\"uptime\":%llu,\"heap\":%d}}",
+             "{\"event\":\"device_info\",\"data\":{\"deviceKey\":\"%s\",\"name\":\"%s\",\"ssid\":\"%s\",\"pass\":\"%s\",\"firmware\":\"%s\",\"rssi\":%d,\"uptime\":%llu,\"heap\":%d}}",
+             key_esc, name_esc, ssid_esc, pass_esc,
              BACKEND_FW_VERSION, rssi,
              (unsigned long long) (esp_timer_get_time() / 1000),
              (int) esp_get_free_heap_size());

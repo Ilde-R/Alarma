@@ -4,6 +4,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "hx711.h"
+#include "led.h"
 #include "sensor.h"
 
 #define SENSOR_TAG "SENSOR"
@@ -68,7 +69,7 @@ static void sensor_task(void* arg) {
             s_alert = alerta;
 
             gpio_set_level(SENSOR_OUTPUT_PIN, alerta ? 1 : 0);
-            gpio_set_level(SENSOR_LED_PIN, alerta ? 0 : 1);
+            led_set_alert(alerta);
         }
 
         vTaskDelay(pdMS_TO_TICKS(SENSOR_LOOP_DELAY_MS));
@@ -79,7 +80,7 @@ esp_err_t sensor_init(void) {
     s_threshold = SENSOR_DEFAULT_UMBRAL;
 
     gpio_config_t out_cfg = {
-        .pin_bit_mask = (1ULL << SENSOR_OUTPUT_PIN) | (1ULL << SENSOR_LED_PIN),
+        .pin_bit_mask = (1ULL << SENSOR_OUTPUT_PIN),
         .mode = GPIO_MODE_OUTPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -87,9 +88,13 @@ esp_err_t sensor_init(void) {
     };
     gpio_config(&out_cfg);
     gpio_set_level(SENSOR_OUTPUT_PIN, 0);
-    gpio_set_level(SENSOR_LED_PIN, 1);
 
-    esp_err_t err = hx711_init(&s_hx711, SENSOR_DOUT_PIN, SENSOR_SCK_PIN);
+    esp_err_t err = led_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(SENSOR_TAG, "ERROR: no se pudo iniciar el LED WS2812");
+    }
+
+    err = hx711_init(&s_hx711, SENSOR_DOUT_PIN, SENSOR_SCK_PIN);
     if (err != ESP_OK) {
         return err;
     }

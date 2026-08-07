@@ -74,6 +74,7 @@ static esp_err_t configure_handler(httpd_req_t* req) {
     char ssid[NETWORK_SSID_MAX_LEN];
     char pass[NETWORK_PASS_MAX_LEN];
     char device_key[NETWORK_DEVICE_KEY_MAX_LEN];
+    char device_name[NETWORK_DEVICE_NAME_MAX_LEN];
 
     int total = req->content_len;
     if (total > PROVISION_MAX_BODY) {
@@ -94,8 +95,9 @@ static esp_err_t configure_handler(httpd_req_t* req) {
     }
 
     json_get_string(body, "pass", pass, sizeof(pass));
+    json_get_string(body, "name", device_name, sizeof(device_name));
 
-    esp_err_t err = network_save_credentials(ssid, pass, device_key);
+    esp_err_t err = network_save_credentials(ssid, pass, device_key, device_name);
     if (err != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Error al guardar");
         return ESP_OK;
