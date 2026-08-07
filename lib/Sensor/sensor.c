@@ -125,6 +125,10 @@ void sensor_set_threshold(float psi) {
     s_threshold = psi;
 }
 
+void sensor_set_scale(float escala) {
+    hx711_set_scale(&s_hx711, escala);
+}
+
 bool sensor_get_alert(void) {
     return s_alert;
 }

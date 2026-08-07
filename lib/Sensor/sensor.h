@@ -22,6 +22,8 @@ float sensor_get_threshold(void);
 
 void sensor_set_threshold(float psi);
 
+void sensor_set_scale(float escala);
+
 bool sensor_get_alert(void);
 
 #endif

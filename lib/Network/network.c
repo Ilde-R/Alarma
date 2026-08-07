@@ -22,6 +22,11 @@ static char s_pass[NETWORK_PASS_MAX_LEN] = "";
 static char s_device_key[NETWORK_DEVICE_KEY_MAX_LEN] = "";
 static char s_ip[NETWORK_IP_STR_LEN] = "0.0.0.0";
 
+static uint32_t s_sta_disconnects = 0;
+static uint32_t s_sta_backoff_ms = 2000;
+static network_rescue_cb_t s_rescue_cb = NULL;
+static bool s_rescue_notified = false;
+
 static const char* reason_str(uint8_t reason) {
     switch (reason) {
         case WIFI_REASON_NO_AP_FOUND: return "NO_AP_FOUND";
@@ -75,13 +80,34 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_event_sta_disconnected_t* event = (wifi_event_sta_disconnected_t*) event_data;
         s_status = NETWORK_CONNECTING;
-        ESP_LOGW(TAG, "Disconnected from router. Reason: %d (%s). Reconnecting in 5s...", event->reason, reason_str(event->reason));
-        vTaskDelay(pdMS_TO_TICKS(5000));
+
+        s_sta_disconnects++;
+        uint32_t backoff = s_sta_backoff_ms;
+        s_sta_backoff_ms = s_sta_backoff_ms * 2;
+        if (s_sta_backoff_ms > 30000) {
+            s_sta_backoff_ms = 30000;
+        }
+
+        ESP_LOGW(TAG, "Disconnected from router. Reason: %d (%s). Reconnect %lu. Retrying in %lu ms...",
+                 event->reason, reason_str(event->reason),
+                 (unsigned long) s_sta_disconnects, (unsigned long) backoff);
+        vTaskDelay(pdMS_TO_TICKS(backoff));
         esp_wifi_connect();
+
+        if (s_sta_disconnects >= NETWORK_MAX_STA_DISCONNECTS && !s_rescue_notified) {
+            s_rescue_notified = true;
+            ESP_LOGW(TAG, "Demasiadas desconexiones (%lu). Abriendo portal de rescate...",
+                     (unsigned long) s_sta_disconnects);
+            if (s_rescue_cb != NULL) {
+                s_rescue_cb();
+            }
+        }
     } 
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         s_status = NETWORK_CONNECTED;
+        s_sta_disconnects = 0;
+        s_sta_backoff_ms = 2000;
         snprintf(s_ip, NETWORK_IP_STR_LEN, IPSTR, IP2STR(&event->ip_info.ip));
         ESP_LOGI(TAG, "Successfully connected! Assigned IP: %s", s_ip);
     }
@@ -100,6 +126,7 @@ esp_err_t network_init(void) {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_create_default_wifi_sta();
+    esp_netif_create_default_wifi_ap();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -200,4 +227,52 @@ esp_err_t network_clear_credentials(void) {
     s_has_creds = false;
     s_status = NETWORK_NEEDS_PROVISIONING;
     return err;
+}
+
+esp_err_t network_ap_start(wifi_mode_t mode) {
+    wifi_config_t ap_config = {
+        .ap = {
+            .ssid = NETWORK_AP_SSID,
+            .ssid_len = 0,
+            .channel = NETWORK_AP_CHANNEL,
+            .max_connection = NETWORK_AP_MAX_CONN,
+            .authmode = WIFI_AUTH_OPEN,
+        },
+    };
+
+    esp_err_t err = esp_wifi_stop();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        return err;
+    }
+
+    err = esp_wifi_set_mode(mode);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = esp_wifi_set_config(WIFI_IF_AP, &ap_config);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = esp_wifi_start();
+    if (err != ESP_OK) {
+        return err;
+    }
+    esp_wifi_set_max_tx_power(34); // 8.5 dBm: evita fallos de RF en ESP32-C3
+    ESP_LOGI(TAG, "AP '%s' iniciado (modo %d). IP 192.168.4.1", NETWORK_AP_SSID, mode);
+    return ESP_OK;
+}
+
+esp_err_t network_ap_stop(void) {
+    esp_err_t err = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (err != ESP_OK) {
+        return err;
+    }
+    ESP_LOGI(TAG, "AP desactivado. Modo STA restaurado.");
+    return ESP_OK;
+}
+
+esp_err_t network_set_rescue_callback(network_rescue_cb_t cb) {
+    s_rescue_cb = cb;
+    s_rescue_notified = false;
+    return ESP_OK;
 }

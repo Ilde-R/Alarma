@@ -1,19 +1,19 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_wifi.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
-#include "esp_netif.h"
+#include "esp_system.h"
 #include "network.h"
 #include "provision.h"
 
-#define PROVISION_AP_SSID "Alarma_Setup"
-#define PROVISION_AP_CHANNEL 1
-#define PROVISION_AP_MAX_CONN 4
 #define PROVISION_MAX_BODY 512
+#define PROVISION_HTTPD_MAX_OPEN_SOCKETS 4
+#define PROVISION_HTTPD_STACK 4096
 
 static const char* TAG = "PROVISION";
+
+static httpd_handle_t s_server = NULL;
 
 static bool json_get_string(const char* json, const char* key, char* out, size_t out_len) {
     size_t key_len = strlen(key);
@@ -108,29 +108,15 @@ static esp_err_t configure_handler(httpd_req_t* req) {
     return ESP_OK;
 }
 
-esp_err_t provision_start(void) {
-    esp_netif_create_default_wifi_ap();
-    esp_wifi_stop();
-
-    wifi_config_t ap_config = {
-        .ap = {
-            .ssid = PROVISION_AP_SSID,
-            .ssid_len = 0,
-            .channel = PROVISION_AP_CHANNEL,
-            .max_connection = PROVISION_AP_MAX_CONN,
-            .authmode = WIFI_AUTH_OPEN,
-        },
-    };
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
-    ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(34)); // 8.5 dBm: evita fallos de RF en ESP32-C3
-
-    vTaskDelay(pdMS_TO_TICKS(500));
+esp_err_t provision_http_start(void) {
+    if (s_server != NULL) {
+        return ESP_OK;
+    }
 
     httpd_config_t httpd_cfg = HTTPD_DEFAULT_CONFIG();
-    httpd_handle_t server = NULL;
-    esp_err_t err = httpd_start(&server, &httpd_cfg);
+    httpd_cfg.max_open_sockets = PROVISION_HTTPD_MAX_OPEN_SOCKETS;
+    httpd_cfg.stack_size = PROVISION_HTTPD_STACK;
+    esp_err_t err = httpd_start(&s_server, &httpd_cfg);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Fallo al iniciar servidor HTTP: %s", esp_err_to_name(err));
         return err;
@@ -141,8 +127,33 @@ esp_err_t provision_start(void) {
         .method = HTTP_POST,
         .handler = configure_handler,
     };
-    httpd_register_uri_handler(server, &uri);
+    httpd_register_uri_handler(s_server, &uri);
 
-    ESP_LOGI(TAG, "Modo provisionamiento activo: WiFi 'Alarma_Setup' (abierta) | IP 192.168.4.1 | POST /configure");
+    ESP_LOGI(TAG, "Servidor HTTP activo en 192.168.4.1: POST /configure");
+    return ESP_OK;
+}
+
+void provision_http_stop(void) {
+    if (s_server != NULL) {
+        httpd_stop(s_server);
+        s_server = NULL;
+        ESP_LOGI(TAG, "Servidor HTTP detenido.");
+    }
+}
+
+esp_err_t provision_start(void) {
+    esp_err_t err = network_ap_start(WIFI_MODE_AP);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Fallo al iniciar AP de provisionamiento: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = provision_http_start();
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    ESP_LOGI(TAG, "Modo provisionamiento activo: WiFi '%s' (abierta) | IP 192.168.4.1 | POST /configure",
+             NETWORK_AP_SSID);
     return ESP_OK;
 }
