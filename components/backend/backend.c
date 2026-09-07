@@ -307,16 +307,14 @@ static void ws_send_device_info(void) {
     char key_esc[NETWORK_DEVICE_KEY_MAX_LEN * 6 + 1];
     char name_esc[NETWORK_DEVICE_NAME_MAX_LEN * 6 + 1];
     char ssid_esc[NETWORK_SSID_MAX_LEN * 6 + 1];
-    char pass_esc[NETWORK_PASS_MAX_LEN * 6 + 1];
     json_escape(s_device_key, key_esc, sizeof(key_esc));
     json_escape(network_get_device_name(), name_esc, sizeof(name_esc));
     json_escape(network_get_ssid(), ssid_esc, sizeof(ssid_esc));
-    json_escape(network_get_pass(), pass_esc, sizeof(pass_esc));
 
     char payload[2048];
     snprintf(payload, sizeof(payload),
-             "{\"event\":\"device_info\",\"data\":{\"deviceKey\":\"%s\",\"name\":\"%s\",\"ssid\":\"%s\",\"pass\":\"%s\",\"firmware\":\"%s\",\"rssi\":%d,\"uptime\":%llu,\"heap\":%d}}",
-             key_esc, name_esc, ssid_esc, pass_esc,
+             "{\"event\":\"device_info\",\"data\":{\"deviceKey\":\"%s\",\"name\":\"%s\",\"ssid\":\"%s\",\"firmware\":\"%s\",\"rssi\":%d,\"uptime\":%llu,\"heap\":%d}}",
+             key_esc, name_esc, ssid_esc,
              BACKEND_FW_VERSION, rssi,
              (unsigned long long) (esp_timer_get_time() / 1000),
              (int) esp_get_free_heap_size());

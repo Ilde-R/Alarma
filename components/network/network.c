@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -96,15 +97,9 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         wifi_event_sta_disconnected_t* event = (wifi_event_sta_disconnected_t*) event_data;
         s_status = NETWORK_CONNECTING;
 
-        uint32_t backoff = s_sta_backoff_ms;
-        s_sta_backoff_ms = s_sta_backoff_ms * 2;
-        if (s_sta_backoff_ms > 30000) {
-            s_sta_backoff_ms = 30000;
-        }
 
-        ESP_LOGW(TAG, "Disconnected from router. Reason: %d (%s). Retrying in %lu ms...",
-                 event->reason, reason_str(event->reason), (unsigned long) backoff);
-        vTaskDelay(pdMS_TO_TICKS(backoff));
+        ESP_LOGW(TAG, "Disconnected from router. Reason: %d (%s). Retrying now...",
+                 event->reason, reason_str(event->reason));
         esp_wifi_connect();
 
         if (reason_is_network_failure(event->reason)) {
@@ -128,7 +123,6 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         s_status = NETWORK_CONNECTED;
         s_sta_network_fails = 0;
         s_rescue_notified = false;
-        s_sta_backoff_ms = 2000;
         snprintf(s_ip, NETWORK_IP_STR_LEN, IPSTR, IP2STR(&event->ip_info.ip));
         ESP_LOGI(TAG, "Successfully connected! Assigned IP: %s", s_ip);
     }
@@ -215,6 +209,13 @@ esp_err_t network_save_credentials(const char* ssid, const char* pass, const cha
         return ESP_ERR_INVALID_ARG;
     }
 
+    if (strlen(ssid) >= sizeof(s_ssid) ||
+        (pass != NULL && strlen(pass) >= sizeof(s_pass)) ||
+        strlen(device_key) >= sizeof(s_device_key) ||
+        (device_name != NULL && strlen(device_name) >= sizeof(s_device_name))) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
     nvs_handle_t handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
@@ -238,9 +239,13 @@ esp_err_t network_save_credentials(const char* ssid, const char* pass, const cha
 
     if (err == ESP_OK) {
         strncpy(s_ssid, ssid, sizeof(s_ssid) - 1);
+        s_ssid[sizeof(s_ssid) - 1] = '\0';
         strncpy(s_pass, pass ? pass : "", sizeof(s_pass) - 1);
+        s_pass[sizeof(s_pass) - 1] = '\0';
         strncpy(s_device_key, device_key, sizeof(s_device_key) - 1);
+        s_device_key[sizeof(s_device_key) - 1] = '\0';
         strncpy(s_device_name, device_name ? device_name : "", sizeof(s_device_name) - 1);
+        s_device_name[sizeof(s_device_name) - 1] = '\0';
         s_has_creds = true;
     }
     return err;

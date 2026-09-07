@@ -72,19 +72,23 @@ static bool json_get_string(const char* json, const char* key, char* out, size_t
 static esp_err_t configure_handler(httpd_req_t* req) {
     char body[PROVISION_MAX_BODY + 1];
     char ssid[NETWORK_SSID_MAX_LEN];
-    char pass[NETWORK_PASS_MAX_LEN];
+    char pass[NETWORK_PASS_MAX_LEN] = "";
     char device_key[NETWORK_DEVICE_KEY_MAX_LEN];
-    char device_name[NETWORK_DEVICE_NAME_MAX_LEN];
+    char device_name[NETWORK_DEVICE_NAME_MAX_LEN] = "";
 
     int total = req->content_len;
-    if (total > PROVISION_MAX_BODY) {
+    if (total <= 0 || total > PROVISION_MAX_BODY) {
         httpd_resp_send_err(req, HTTPD_413_CONTENT_TOO_LARGE, "Cuerpo demasiado grande");
         return ESP_OK;
     }
-    int received = httpd_req_recv(req, body, total < 0 ? 0 : total);
-    if (received <= 0) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Cuerpo vacio");
-        return ESP_OK;
+    int received = 0;
+    while (received < total) {
+        int chunk = httpd_req_recv(req, body + received, total - received);
+        if (chunk <= 0) {
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Cuerpo incompleto");
+            return ESP_OK;
+        }
+        received += chunk;
     }
     body[received] = '\0';
 
@@ -129,7 +133,13 @@ esp_err_t provision_http_start(void) {
         .method = HTTP_POST,
         .handler = configure_handler,
     };
-    httpd_register_uri_handler(s_server, &uri);
+    err = httpd_register_uri_handler(s_server, &uri);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Fallo al registrar /configure: %s", esp_err_to_name(err));
+        httpd_stop(s_server);
+        s_server = NULL;
+        return err;
+    }
 
     ESP_LOGI(TAG, "Servidor HTTP activo en 192.168.4.1: POST /configure");
     return ESP_OK;
