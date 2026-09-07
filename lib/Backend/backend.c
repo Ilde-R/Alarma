@@ -11,6 +11,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_transport.h"
+#include "esp_transport_tcp.h"
 #include "esp_transport_ssl.h"
 #include "esp_transport_ws.h"
 #include "network.h"
@@ -20,9 +21,8 @@
 
 #define BACKEND_TAG "BACKEND"
 
-#define BACKEND_HOST "farm-backend-dev.fly.dev" // PRUEBAS
-// #define BACKEND_HOST "farm-backend.fly.dev"
-#define BACKEND_PORT 443
+#define BACKEND_HOST "78.13.219.157"
+#define BACKEND_PORT 3000
 #define BACKEND_CONNECT_TIMEOUT_MS 10000
 #define BACKEND_POLL_TIMEOUT_MS 50
 #define BACKEND_READ_TIMEOUT_MS 5000
@@ -233,7 +233,7 @@ static bool ws_send_frame(uint8_t opcode, const char* payload) {
         return false;
     }
 
-    uint8_t frame[6];
+    uint8_t frame[8];
     size_t hlen = 0;
     frame[hlen++] = 0x80 | opcode;
     if (len <= 125) {
@@ -342,12 +342,18 @@ static esp_err_t ws_connect(void) {
         return ESP_ERR_INVALID_STATE;
     }
 
-    s_ssl = esp_transport_ssl_init();
+    // HTTPS/WSS:
+    // s_ssl = esp_transport_ssl_init();
+    // if (s_ssl != NULL) {
+    //     esp_transport_ssl_crt_bundle_attach(s_ssl, esp_crt_bundle_attach);
+    // }
+
+    // HTTP/WS:
+    s_ssl = esp_transport_tcp_init();
     if (s_ssl == NULL) {
-        ESP_LOGE(BACKEND_TAG, "Fallo al crear transporte SSL");
+        ESP_LOGE(BACKEND_TAG, "Fallo al crear transporte TCP");
         return ESP_FAIL;
     }
-    esp_transport_ssl_crt_bundle_attach(s_ssl, esp_crt_bundle_attach);
 
     s_ws = esp_transport_ws_init(s_ssl);
     if (s_ws == NULL) {
@@ -366,14 +372,18 @@ static esp_err_t ws_connect(void) {
     esp_transport_ws_set_config(s_ws, &ws_cfg);
 
     char headers[192];
-    snprintf(headers, sizeof(headers), "key: %s\r\nOrigin: https://%s\r\n",
+    // HTTPS/WSS:
+    // snprintf(headers, sizeof(headers), "key: %s\r\nOrigin: https://%s\r\n",
+    //          s_device_key, BACKEND_HOST);
+    // HTTP/WS:
+    snprintf(headers, sizeof(headers), "key: %s\r\nOrigin: http://%s\r\n",
              s_device_key, BACKEND_HOST);
     esp_transport_ws_set_headers(s_ws, headers);
     esp_transport_ws_set_user_agent(s_ws, "Alarma/" BACKEND_FW_VERSION);
 
     int rc = esp_transport_connect(s_ws, BACKEND_HOST, BACKEND_PORT, BACKEND_CONNECT_TIMEOUT_MS);
     if (rc != 0) {
-        ESP_LOGW(BACKEND_TAG, "Fallo de conexion TCP/TLS a %s:%d", BACKEND_HOST, BACKEND_PORT);
+        ESP_LOGW(BACKEND_TAG, "Fallo de conexion TCP a %s:%d", BACKEND_HOST, BACKEND_PORT);
         ws_close();
         return ESP_FAIL;
     }
