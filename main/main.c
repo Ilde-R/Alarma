@@ -1,8 +1,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_log.h"
 #include "backend.h"
-#include "ina219.h"
 #include "network.h"
 #include "provision.h"
 #include "sensor.h"
@@ -17,11 +15,6 @@ static void wifi_rescue_handler(void) {
 }
 
 void app_main(void) {
-    esp_err_t ina219_err = ina219_init(6, 7, 0x40);
-    if (ina219_err != ESP_OK) {
-        ESP_LOGW("MAIN", "INA219 no disponible: %s", esp_err_to_name(ina219_err));
-    }
-
     sensor_init();
     sensor_start();
 

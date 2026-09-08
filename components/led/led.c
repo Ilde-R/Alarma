@@ -16,7 +16,6 @@
 #define LED_T0L 9
 #define LED_T1H 9
 #define LED_T1L 3
-
 static rmt_channel_handle_t s_tx_chan = NULL;
 static rmt_encoder_handle_t s_encoder = NULL;
 

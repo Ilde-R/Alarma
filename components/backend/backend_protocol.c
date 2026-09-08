@@ -5,7 +5,6 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
-#include "ina219.h"
 #include "network.h"
 #include "sensor.h"
 #include "backend_protocol.h"
@@ -91,19 +90,10 @@ static void json_escape(const char* input, char* output, size_t output_length) {
 
 void backend_protocol_send_pressure(backend_ws_t* ws, int64_t timestamp_ms) {
     float psi = sensor_get_pressure();
-    ina219_reading_t electrical = {0};
     char payload[BACKEND_MSG_MAX];
-    if (ina219_read(&electrical) == ESP_OK) {
-        snprintf(payload, sizeof(payload),
-                 "{\"event\":\"pressure_reading\",\"data\":{\"psi\":%.2f,\"current_mA\":%.2f,\"voltage_V\":%.3f,\"power_mW\":%.2f,\"ts\":%llu}}",
-                 (double) psi, (double) electrical.current_ma,
-                 (double) electrical.bus_voltage_v, (double) electrical.power_mw,
-                 (unsigned long long) timestamp_ms);
-    } else {
-        snprintf(payload, sizeof(payload),
-                 "{\"event\":\"pressure_reading\",\"data\":{\"psi\":%.2f,\"ts\":%llu}}",
-                 (double) psi, (unsigned long long) timestamp_ms);
-    }
+    snprintf(payload, sizeof(payload),
+             "{\"event\":\"pressure_reading\",\"data\":{\"psi\":%.2f,\"ts\":%llu}}",
+             (double) psi, (unsigned long long) timestamp_ms);
     if (backend_ws_send_text(ws, payload)) {
         ESP_LOGI(BACKEND_TAG, "Enviado: %s", payload);
     } else {
