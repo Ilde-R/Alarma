@@ -314,27 +314,15 @@ static void sensor_task(void *arg)
         /*
          * Comprobar umbral.
          */
-        bool is_alert =
-            (psi <= s_threshold);
-
+        bool is_alert = (psi > s_threshold);
 
         s_pressure = psi;
         s_alert = is_alert;
         
         /*
-        * LED WS2812:
-        *
-        * <= umbral -> azul
-        * > umbral -> apagado
-        */
+         * LED Integrado (GPIO).
+         */
         esp_err_t led_err = led_set_alert(is_alert);
-        if (led_err != ESP_OK) {
-            ESP_LOGW(
-                SENSOR_TAG,
-                "No se pudo actualizar LED: %s",
-                esp_err_to_name(led_err)
-            );
-        }
 
         /*
          * MOSFET.
