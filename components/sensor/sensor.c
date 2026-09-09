@@ -314,7 +314,7 @@ static void sensor_task(void *arg)
         /*
          * Comprobar umbral.
          */
-        bool is_alert = (psi > s_threshold);
+        bool is_alert = (psi <= s_threshold);
 
         s_pressure = psi;
         s_alert = is_alert;
@@ -322,7 +322,7 @@ static void sensor_task(void *arg)
         /*
          * LED Integrado (GPIO).
          */
-        esp_err_t led_err = led_set_alert(is_alert);
+        led_set_alert(is_alert);
 
         /*
          * MOSFET.

@@ -7,9 +7,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+
 #define HX711_TAG "HX711"
 #define HX711_READ_TIMEOUT_US    200000
 #define HX711_PULSE_DELAY_US     1
+
 
 
 esp_err_t hx711_init(hx711_t *dev, int dout_pin, int sck_pin)
@@ -121,96 +124,56 @@ esp_err_t hx711_read_raw(hx711_t *dev, int32_t *value)
      * Esperar hasta que DOUT pase a LOW.
      */
     int64_t start = esp_timer_get_time();
-
     while (gpio_get_level(dev->dout_pin) != 0) {
-
         if ((esp_timer_get_time() - start) >= HX711_READ_TIMEOUT_US) {
-
-            ESP_LOGW(
-                HX711_TAG,
-                "Timeout esperando DOUT del HX711"
-            );
-
+            ESP_LOGW(HX711_TAG, "Timeout esperando DOUT del HX711");
             return ESP_ERR_TIMEOUT;
         }
-
-        /*
-         * Esperar 1 ms antes de volver a comprobar.
-         *
-         * Esto NO ocurre dentro de una sección crítica.
-         */
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 
-
-    /*
-     * Lectura de los 24 bits.
-     */
     uint32_t raw = 0;
 
+    portENTER_CRITICAL(&mux);
+
     for (int i = 0; i < 24; i++) {
-
-        /*
-         * SCK HIGH
-         */
+        // SCK HIGH
         gpio_set_level(dev->sck_pin, 1);
-
         esp_rom_delay_us(HX711_PULSE_DELAY_US);
 
-
-        /*
-         * Leer bit.
-         */
+        // Leer bit
         raw <<= 1;
-
         if (gpio_get_level(dev->dout_pin)) {
             raw |= 1;
         }
 
-
-        /*
-         * SCK LOW
-         */
+        // SCK LOW
         gpio_set_level(dev->sck_pin, 0);
-
         esp_rom_delay_us(HX711_PULSE_DELAY_US);
     }
 
 
     /*
-     * Pulso 25:
-     *
+     * Pulsos 25, 26 y 27:
      * Canal A
-     * Ganancia 128
+     * Ganancia 64
      */
-    gpio_set_level(dev->sck_pin, 1);
+    for(int p = 0; p < 3; p++) {
+        gpio_set_level(dev->sck_pin, 1);
+        esp_rom_delay_us(HX711_PULSE_DELAY_US);
+        gpio_set_level(dev->sck_pin, 0);
+        esp_rom_delay_us(HX711_PULSE_DELAY_US);
+    }
+    portEXIT_CRITICAL(&mux);
 
-    esp_rom_delay_us(HX711_PULSE_DELAY_US);
-
-    gpio_set_level(dev->sck_pin, 0);
-
-    esp_rom_delay_us(HX711_PULSE_DELAY_US);
-
-
-    /*
-     * Convertir los 24 bits a entero con signo.
-     *
-     * El HX711 entrega complemento a dos de 24 bits.
-     */
     int32_t signed_value;
-
     if (raw & 0x800000) {
-
         signed_value = (int32_t)(raw | 0xFF000000);
-
     } else {
-
         signed_value = (int32_t)raw;
     }
 
-
     *value = signed_value;
-
     return ESP_OK;
 }
 
@@ -257,17 +220,27 @@ esp_err_t hx711_get_units(hx711_t *dev, float *units)
         return ESP_ERR_INVALID_STATE;
     }
 
+    int32_t raw;
 
-    float value;
-
-    esp_err_t err = hx711_get_value(dev, &value);
+    esp_err_t err = hx711_read_raw(dev, &raw);
 
     if (err != ESP_OK) {
         return err;
     }
 
+    float value = (float)(raw - dev->offset);
 
     *units = value / dev->scale;
+
+    // ESP_LOGI(
+    //     HX711_TAG,
+    //     "RAW=%ld | OFFSET=%ld | VALUE=%.0f | SCALE=%.2f | UNITS=%.2f",
+    //     (long)raw,
+    //     (long)dev->offset,
+    //     (double)value,
+    //     (double)dev->scale,
+    //     (double)*units
+    // );
 
     return ESP_OK;
 }

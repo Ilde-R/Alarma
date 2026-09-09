@@ -8,6 +8,7 @@
 #define SENSOR_SCK_PIN      4
 #define SENSOR_OUTPUT_PIN   5
 
+// #define SENSOR_DEFAULT_SCALE    261.10f
 #define SENSOR_DEFAULT_SCALE    25000.0f
 
 #define SENSOR_DEFAULT_UMBRAL   10.0f

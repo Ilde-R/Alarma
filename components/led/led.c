@@ -15,6 +15,6 @@ esp_err_t led_init(void) {
 }
 
 esp_err_t led_set_alert(bool alert) {
-    esp_err_t err = gpio_set_level(LED_ONBOARD_PIN, alert ? 1 : 0);
+    esp_err_t err = gpio_set_level(LED_ONBOARD_PIN, alert ? 0 : 1);
     return err;
 }
