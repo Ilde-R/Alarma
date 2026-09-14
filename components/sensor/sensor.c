@@ -1,5 +1,6 @@
 #include "sensor.h"
 #include "hl100d.h"
+#include "led.h"
 #include "esp_adc/adc_oneshot.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -29,6 +30,8 @@ esp_err_t sensor_init(void) {
     };
     gpio_config(&io_conf);
     gpio_set_level(SENSOR_OUTPUT_PIN, 0); 
+
+    led_init();
 
     hl100d_config_t hl_config = {
         .adc_unit = SENSOR_ADC_UNIT,
@@ -61,6 +64,7 @@ static void sensor_task(void *pvParameters) {
                         if (confirmation_counter >= REQUIRED_CONFIRMATIONS) {
                             alert_active = true;
                             gpio_set_level(SENSOR_OUTPUT_PIN, 1);
+                            led_set_alert(true);
                             ESP_LOGE(TAG, "ALARMA ACTIVA! Actual: %.2f PSI", current_pressure);
                         }
                     } else {
@@ -68,6 +72,7 @@ static void sensor_task(void *pvParameters) {
                         if (alert_active) {
                             alert_active = false;
                             gpio_set_level(SENSOR_OUTPUT_PIN, 0); 
+                            led_set_alert(false);
                             ESP_LOGI(TAG, "Presion normalizada. Alarma desactivada.");
                         } else {
                             ESP_LOGI(TAG, "Presion normal. Actual: %.2f PSI", current_pressure);
