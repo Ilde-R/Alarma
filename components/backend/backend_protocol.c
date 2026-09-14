@@ -146,10 +146,10 @@ void backend_protocol_handle_message(backend_ws_t* ws, const char* message,
             config->interval_ms = (uint32_t) strtoul(value, NULL, 10);
         }
         value = json_get_number_str(message, "scaleFactor");
-        if (value != NULL) {
-            config->scale = strtof(value, NULL);
-            sensor_set_scale(config->scale);
-        }
+        // if (value != NULL) {
+        //     config->scale = strtof(value, NULL);
+        //     sensor_set_scale(config->scale);
+        // }
         backend_config_save(config);
         backend_ws_send_text(ws, "{\"event\":\"config_ack\",\"data\":{\"ok\":true}}");
     } else if (strcmp(event, "reading_ack") == 0) {

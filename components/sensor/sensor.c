@@ -1,572 +1,106 @@
-#include <math.h>
-
-#include "driver/gpio.h"
-#include "esp_log.h"
-
+#include "sensor.h"
+#include "hl100d.h"
+#include "esp_adc/adc_oneshot.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-
-#include "hx711.h"
-#include "led.h"
-#include "sensor.h"
-
-
-#define SENSOR_TAG "SENSOR"
-
-#define SENSOR_TASK_STACK       4096
-#define SENSOR_TASK_PRIORITY    5
-#define SENSOR_LOOP_DELAY_MS    100
-#define SENSOR_LOG_INTERVAL_MS  1000
-
-
-static hx711_t s_hx711;
-static volatile float s_pressure = 0.0f;
-static volatile float s_threshold =
-    SENSOR_DEFAULT_UMBRAL;
-static volatile bool s_alert = false;
-
-
-/*
- * Última presión válida.
- */
-static float previous_pressure = 0.0f;
-
-
-/*
- * Número de saltos sospechosos consecutivos.
- */
-static uint8_t consecutive_jumps = 0;
-
-
-/*
- * Tiempo del último log.
- */
-static TickType_t last_log_time;
-
-
-/*
- * Mediana de tres valores.
- */
-static float median3(float a, float b, float c)
-{
-    float tmp;
-
-
-    if (a > b) {
-        tmp = a;
-        a = b;
-        b = tmp;
-    }
-
-
-    if (b > c) {
-        tmp = b;
-        b = c;
-        c = tmp;
-    }
-
-
-    if (a > b) {
-        tmp = a;
-        a = b;
-        b = tmp;
-    }
-
-
-    return b;
-}
-
-
-/*
- * Lee 3 muestras independientes
- */
-static esp_err_t sensor_read_median(float *result)
-{
-    if (result == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-
-    float readings[3];
-
-
-    for (int i = 0; i < 3; i++) {
-
-        esp_err_t err =
-            hx711_get_units(
-                &s_hx711,
-                &readings[i]
-            );
-
-
-        if (err != ESP_OK) {
-
-            ESP_LOGW(
-                SENSOR_TAG,
-                "Lectura %d/3 del HX711 invalida: %s",
-                i + 1,
-                esp_err_to_name(err)
-            );
-
-            return err;
-        }
-    }
-
-
-    *result = median3(
-        readings[0],
-        readings[1],
-        readings[2]
-    );
-
-
-    return ESP_OK;
-}
-
-
-/*
- * Tarea principal del sensor.
- */
-static void sensor_task(void *arg)
-{
-    (void)arg;
-
-
-    ESP_LOGI(
-        SENSOR_TAG,
-        "Esperando 1 segundo para estabilizacion..."
-    );
-
-    vTaskDelay(pdMS_TO_TICKS(1000));
-
-
-    /*
-     * Comprobar HX711.
-     */
-    if (!hx711_is_ready(&s_hx711)) {
-
-        ESP_LOGW(
-            SENSOR_TAG,
-            "HX711 no estaba listo al iniciar"
-        );
-    }
-
-
-    /*
-     * TARE.
-     *
-     * Arduino:
-     *
-     * sensorPresion.tare(20);
-     */
-    esp_err_t err =
-        hx711_tare(
-            &s_hx711,
-            20
-        );
-
-
-    if (err != ESP_OK) {
-
-        ESP_LOGE(
-            SENSOR_TAG,
-            "No se pudo hacer tare: %s",
-            esp_err_to_name(err)
-        );
-
-    } else {
-        hx711_set_scale(
-            &s_hx711,
-            SENSOR_DEFAULT_SCALE
-        );
-
-
-        ESP_LOGI(
-            SENSOR_TAG,
-            "Sensor calibrado."
-        );
-
-        ESP_LOGI(
-            SENSOR_TAG,
-            "Scale = %.2f",
-            (double)SENSOR_DEFAULT_SCALE
-        );
-
-        ESP_LOGI(
-            SENSOR_TAG,
-            "Monitoreo iniciado."
-        );
-    }
-
-
-    last_log_time = xTaskGetTickCount();
-
-
-    for (;;) {
-
-        /*
-         * Comprobamos si existe una conversión
-         * disponible.
-         */
-        if (!hx711_is_ready(&s_hx711)) {
-            vTaskDelay(
-                pdMS_TO_TICKS(SENSOR_LOOP_DELAY_MS)
-            );
-
-            continue;
-        }
-
-
-        /*
-         * Leer tres muestras y obtener mediana.
-         */
-        float psi;
-
-        err = sensor_read_median(&psi);
-
-
-        if (err != ESP_OK) {
-            vTaskDelay(
-                pdMS_TO_TICKS(SENSOR_LOOP_DELAY_MS)
-            );
-
-            continue;
-        }
-
-
-        /*
-         * Eliminar valores cercanos a cero.
-         */
-        if (psi > -0.8f && psi < 0.8f) {
-
-            psi = 0.0f;
-        }
-
-        if (psi < 0.0f) {
-
-            psi = 0.0f;
-        }
-
-
-        /*
-         * Limitar rango físico.
-         */
-        if (psi > MAX_RANGE_PSI) {
-
-            ESP_LOGW(
-                SENSOR_TAG,
-                "Lectura fuera de rango descartada: %.2f PSI",
-                (double)psi
-            );
-
-
-            vTaskDelay(
-                pdMS_TO_TICKS(SENSOR_LOOP_DELAY_MS)
-            );
-
-            continue;
-        }
-
-        /*
-         * Filtro de salto sospechoso.
-         */
-        if (fabsf(psi - previous_pressure)
-            > SUSPICIOUS_JUMP_PSI) {
-
-            consecutive_jumps++;
-
-
-            ESP_LOGW(
-                SENSOR_TAG,
-                "Salto sospechoso: %.2f -> %.2f PSI (%u/%u)",
-                (double)previous_pressure,
-                (double)psi,
-                consecutive_jumps,
-                REQUIRED_CONFIRMATIONS
-            );
-
-            if (consecutive_jumps
-                < REQUIRED_CONFIRMATIONS) {
-
-                vTaskDelay(
-                    pdMS_TO_TICKS(SENSOR_LOOP_DELAY_MS)
-                );
-
-                continue;
-            }
-        }
-        else {
-
-            /*
-             * Lectura normal:
-             * reiniciar contador.
-             */
-            consecutive_jumps = 0;
-        }
-
-
-        /*
-         * Guardar presión válida.
-         */
-        previous_pressure = psi;
-
-
-        /*
-         * Comprobar umbral.
-         */
-        bool is_alert = (psi <= s_threshold);
-
-        s_pressure = psi;
-        s_alert = is_alert;
-        
-        /*
-         * LED Integrado (GPIO).
-         */
-        led_set_alert(is_alert);
-
-        /*
-         * MOSFET.
-         */
-        gpio_set_level(
-            SENSOR_OUTPUT_PIN,
-            is_alert ? 1 : 0
-        );
-
-
-        /*
-         * Log cada segundo.
-         */
-        TickType_t current_time =
-            xTaskGetTickCount();
-
-
-        if (
-            current_time - last_log_time
-            >= pdMS_TO_TICKS(SENSOR_LOG_INTERVAL_MS)
-        ) {
-
-            ESP_LOGI(
-                SENSOR_TAG,
-                "Pressure: %.2f PSI | "
-                "Threshold: %.2f PSI | "
-                "Alert: %s | "
-                "MOSFET GPIO%d: %s",
-
-                (double)psi,
-
-                (double)s_threshold,
-
-                is_alert
-                    ? "ACTIVE"
-                    : "inactive",
-
-                SENSOR_OUTPUT_PIN,
-
-                is_alert
-                    ? "ON"
-                    : "OFF"
-            );
-
-
-            last_log_time = current_time;
-        }
-
-        vTaskDelay(
-            pdMS_TO_TICKS(SENSOR_LOOP_DELAY_MS)
-        );
-    }
-}
-
-
-/*
- * Inicialización.
- */
-esp_err_t sensor_init(void)
-{
-    s_pressure = 0.0f;
-
-    s_threshold =
-        SENSOR_DEFAULT_UMBRAL;
-
-    s_alert = false;
-
-    previous_pressure = 0.0f;
-
-    consecutive_jumps = 0;
-
-
-    /*
-     * GPIO SCK.
-     */
-    gpio_reset_pin(SENSOR_SCK_PIN);
-
-
-    /*
-     * GPIO DOUT.
-     */
-    gpio_reset_pin(SENSOR_DOUT_PIN);
-
-
-    /*
-     * GPIO MOSFET.
-     */
-    gpio_reset_pin(SENSOR_OUTPUT_PIN);
-
-
-    /*
-     * Configurar MOSFET.
-     */
-    gpio_config_t out_cfg = {
-        .pin_bit_mask =
-            (1ULL << SENSOR_OUTPUT_PIN),
-
-        .mode =
-            GPIO_MODE_OUTPUT,
-
-        .pull_up_en =
-            GPIO_PULLUP_DISABLE,
-
-        .pull_down_en =
-            GPIO_PULLDOWN_DISABLE,
-
-        .intr_type =
-            GPIO_INTR_DISABLE,
+#include "driver/gpio.h"
+#include "esp_log.h"
+#include <math.h>
+
+#define SENSOR_ADC_UNIT ADC_UNIT_1
+#define SENSOR_ADC_CHANNEL ADC_CHANNEL_0
+
+static const char *TAG = "SENSOR_LOGIC";
+
+static hl100d_t pressure_sensor;
+static float current_pressure = 0.0f;  
+static float last_valid_pressure = 0.0f;
+static float current_threshold = SENSOR_DEFAULT_UMBRAL;
+static bool alert_active = false;
+static int confirmation_counter = 0;
+
+esp_err_t sensor_init(void) {
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << SENSOR_OUTPUT_PIN),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = 0,
+        .pull_down_en = 0,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+    gpio_config(&io_conf);
+    gpio_set_level(SENSOR_OUTPUT_PIN, 0); 
+
+    hl100d_config_t hl_config = {
+        .adc_unit = SENSOR_ADC_UNIT,
+        .adc_channel = SENSOR_ADC_CHANNEL,
+        .offset_mv = SENSOR_OFFSET_MV,
+        .full_scale_mv = SENSOR_FULL_SCALE_MV,
+        .max_pressure_kpa = SENSOR_MAX_KPA
     };
 
+    return hl100d_init(&pressure_sensor, &hl_config);
+}
 
-    esp_err_t err =
-        gpio_config(&out_cfg);
+static void sensor_task(void *pvParameters) {
+    hl100d_reading_t reading;
+    
+    while (1) {
+        if (hl100d_read(&pressure_sensor, &reading) == ESP_OK) {
+            float new_pressure = reading.pressure_kpa * KPA_TO_PSI;
 
+            if (new_pressure <= SENSOR_MAX_PSI) {
+                
+                if (fabs(new_pressure - last_valid_pressure) > SUSPICIOUS_JUMP_PSI) {
+                    ESP_LOGW(TAG, "Salto de presion! Anterior: %.2f PSI, Nuevo: %.2f PSI", last_valid_pressure, new_pressure);
+                } else {
+                    current_pressure = new_pressure;
+                    last_valid_pressure = new_pressure;
+                    
+                    if (current_pressure < current_threshold) {
+                        confirmation_counter++;
+                        if (confirmation_counter >= REQUIRED_CONFIRMATIONS) {
+                            alert_active = true;
+                            gpio_set_level(SENSOR_OUTPUT_PIN, 1);
+                            ESP_LOGE(TAG, "ALARMA ACTIVA! Actual: %.2f PSI", current_pressure);
+                        }
+                    } else {
+                        confirmation_counter = 0;
+                        if (alert_active) {
+                            alert_active = false;
+                            gpio_set_level(SENSOR_OUTPUT_PIN, 0); 
+                            ESP_LOGI(TAG, "Presion normalizada. Alarma desactivada.");
+                        } else {
+                            ESP_LOGI(TAG, "Presion normal. Actual: %.2f PSI", current_pressure);
+                        }
+                    }
+                }
+            }
+        } else {
+            ESP_LOGE(TAG, "Failed to read sensor hardware");
+        }
 
-    if (err != ESP_OK) {
-
-        ESP_LOGE(
-            SENSOR_TAG,
-            "Error configurando GPIO%d: %s",
-            SENSOR_OUTPUT_PIN,
-            esp_err_to_name(err)
-        );
-
-        return err;
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
-
-
-    gpio_set_level( SENSOR_OUTPUT_PIN, 0 );
-
-    /*
-     * LED.
-     */
-    err = led_init();
-
-
-    if (err != ESP_OK) {
-
-        ESP_LOGW(
-            SENSOR_TAG,
-            "No se pudo iniciar LED WS2812"
-        );
-    }
-
-
-    /*
-     * Inicializar HX711.
-     */
-    ESP_LOGI(
-        SENSOR_TAG,
-        "HX711 configurado: "
-        "OUT/DOUT=GPIO%d, "
-        "SCK=GPIO%d",
-
-        SENSOR_DOUT_PIN,
-        SENSOR_SCK_PIN
-    );
-
-
-    err =
-        hx711_init(
-            &s_hx711,
-            SENSOR_DOUT_PIN,
-            SENSOR_SCK_PIN
-        );
-
-
-    if (err != ESP_OK) {
-
-        ESP_LOGE(
-            SENSOR_TAG,
-            "Error inicializando HX711: %s",
-            esp_err_to_name(err)
-        );
-
-        return err;
-    }
-
-
-    return ESP_OK;
 }
 
-
-/*
- * Iniciar tarea.
- */
-esp_err_t sensor_start(void)
-{
-    BaseType_t ret =
-        xTaskCreate(
-            sensor_task,
-            "SensorTask",
-            SENSOR_TASK_STACK,
-            NULL,
-            SENSOR_TASK_PRIORITY,
-            NULL
-        );
-
-
-    if (ret != pdPASS) {
-
-        ESP_LOGE(
-            SENSOR_TAG,
-            "No se pudo crear SensorTask"
-        );
-
-        return ESP_FAIL;
-    }
-
-
-    return ESP_OK;
+esp_err_t sensor_start(void) {
+    BaseType_t res = xTaskCreate(sensor_task, "sensor_task", 4096, NULL, 5, NULL);
+    return (res == pdPASS) ? ESP_OK : ESP_FAIL;
 }
 
-
-/*
- * API pública.
- */
-float sensor_get_pressure(void)
-{
-    return s_pressure;
+float sensor_get_pressure(void) {
+    return current_pressure;
 }
 
-
-float sensor_get_threshold(void)
-{
-    return s_threshold;
+float sensor_get_threshold(void) {
+    return current_threshold;
 }
 
-
-void sensor_set_threshold(float psi)
-{
-    s_threshold = psi;
+void sensor_set_threshold(float psi) {
+    current_threshold = psi;
+    ESP_LOGI(TAG, "Threshold updated to: %.2f PSI", current_threshold);
 }
 
-
-void sensor_set_scale(float escala)
-{
-    hx711_set_scale(
-        &s_hx711,
-        escala
-    );
-}
-
-bool sensor_get_alert(void)
-{
-    return s_alert;
+bool sensor_get_alert(void) {
+    return alert_active;
 }
