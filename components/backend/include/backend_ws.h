@@ -13,7 +13,7 @@ typedef struct {
 } backend_ws_t;
 
 void backend_ws_init(backend_ws_t* client);
-esp_err_t backend_ws_connect(backend_ws_t* client, const char* device_key);
+esp_err_t backend_ws_connect(backend_ws_t* client, const char* host, int port, const char* device_key);
 void backend_ws_close(backend_ws_t* client);
 bool backend_ws_is_connected(const backend_ws_t* client);
 bool backend_ws_send_text(backend_ws_t* client, const char* payload);

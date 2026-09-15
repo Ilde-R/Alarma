@@ -21,6 +21,9 @@
 #define BACKEND_TASK_PRIORITY 2
 #define BACKEND_LOOP_DELAY_MS 50
 
+#define SERVER_HOST "78.13.219.157"
+#define SERVER_PORT 3000
+
 static backend_ws_t s_ws;
 static backend_config_t s_config;
 static bool s_credentials_invalid = false;
@@ -50,10 +53,16 @@ static void backend_task(void* arg) {
             continue;
         }
 
+        if (!network_is_connected()) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
         if (!backend_ws_is_connected(&s_ws)) {
-            if (backend_ws_connect(&s_ws, s_device_key) != ESP_OK) {
-                ESP_LOGW(BACKEND_TAG, "Fallo de conexion. Reintento en %lu ms", s_ws_reconnect_ms);
+            if (backend_ws_connect(&s_ws, SERVER_HOST, SERVER_PORT, s_device_key) != ESP_OK) {
+                ESP_LOGW(BACKEND_TAG, "Fallo de conexion WS. Reintento en %lu ms", s_ws_reconnect_ms);
                 vTaskDelay(pdMS_TO_TICKS(s_ws_reconnect_ms));
+                
                 s_ws_reconnect_ms *= 2;
                 if (s_ws_reconnect_ms > WS_RECONNECT_MAX_MS) {
                     s_ws_reconnect_ms = WS_RECONNECT_MAX_MS;
@@ -61,9 +70,13 @@ static void backend_task(void* arg) {
                 continue;
             }
 
-            ESP_LOGI(BACKEND_TAG, "WebSocket conectado");
+            ESP_LOGI(BACKEND_TAG, "WebSocket conectado exitosamente");
+            
+            s_ws_reconnect_ms = WS_RECONNECT_INITIAL_MS;
+
             backend_ws_send_text(&s_ws, "{\"event\":\"get_threshold\",\"data\":{\"blowerId\":\"\"}}");
             backend_protocol_send_device_info(&s_ws, s_device_key);
+            
             now = esp_timer_get_time() / 1000;
             s_last_reading_ms = now;
             s_last_device_info_ms = now;
@@ -72,6 +85,7 @@ static void backend_task(void* arg) {
         if (backend_ws_is_connected(&s_ws)) {
             char buffer[BACKEND_WS_READ_BUF];
             int length = backend_ws_read_message(&s_ws, buffer, sizeof(buffer));
+            
             if (length == -2) {
                 ESP_LOGW(BACKEND_TAG, "Servidor cerro WS. Abriendo provisionamiento...");
                 backend_ws_close(&s_ws);
@@ -79,12 +93,13 @@ static void backend_task(void* arg) {
                 s_reprovisioning = true;
                 continue;
             }
+            
             if (length < 0) {
-                ESP_LOGW(BACKEND_TAG, "Conexion WS perdida. Reconectando...");
+                ESP_LOGW(BACKEND_TAG, "Conexion WS perdida repentinamente.");
                 backend_ws_close(&s_ws);
-                vTaskDelay(pdMS_TO_TICKS(1000));
-                continue;
+                continue; 
             }
+            
             if (length > 0) {
                 backend_protocol_handle_message(&s_ws, buffer, &s_config, &s_credentials_invalid);
             }
@@ -98,6 +113,7 @@ static void backend_task(void* arg) {
                 backend_protocol_send_pressure(&s_ws, now);
                 s_last_reading_ms = now;
             }
+            
             if (now - s_last_device_info_ms >= DEVICE_INFO_INTERVAL_MS) {
                 backend_protocol_send_device_info(&s_ws, s_device_key);
                 s_last_device_info_ms = now;
@@ -119,9 +135,12 @@ esp_err_t backend_init(void) {
 
     esp_err_t config_err = backend_config_load(&s_config);
     if (config_err != ESP_OK) {
-        ESP_LOGW(BACKEND_TAG, "No se pudo cargar configuracion: %s", esp_err_to_name(config_err));
+        ESP_LOGW(BACKEND_TAG, "No se pudo cargar configuracion previa: %s", esp_err_to_name(config_err));
     }
+    
     sensor_set_threshold(s_config.threshold);
+    sensor_set_scale(s_config.scale); 
+    
     s_previous_alert = sensor_get_alert();
 
     ESP_LOGI(BACKEND_TAG, "Backend listo. intervalo=%lu ms escala=%.2f umbral=%.2f",

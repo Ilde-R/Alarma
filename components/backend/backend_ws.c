@@ -20,7 +20,8 @@ static bool send_frame(backend_ws_t* client, uint8_t opcode, const char* payload
         return false;
     }
 
-    size_t length = strlen(payload);
+    size_t length = (payload != NULL) ? strlen(payload) : 0;
+    
     if (length > 65535) {
         ESP_LOGE(BACKEND_TAG, "Payload WS demasiado largo (%u bytes)", (unsigned) length);
         return false;
@@ -29,6 +30,7 @@ static bool send_frame(backend_ws_t* client, uint8_t opcode, const char* payload
     uint8_t frame[8];
     size_t header_length = 0;
     frame[header_length++] = 0x80 | opcode;
+    
     if (length <= 125) {
         frame[header_length++] = 0x80 | (uint8_t) length;
     } else {
@@ -38,24 +40,30 @@ static bool send_frame(backend_ws_t* client, uint8_t opcode, const char* payload
     }
 
     uint32_t mask = esp_random();
-    frame[header_length++] = (uint8_t) (mask >> 24);
-    frame[header_length++] = (uint8_t) (mask >> 16);
-    frame[header_length++] = (uint8_t) (mask >> 8);
-    frame[header_length++] = (uint8_t) mask;
-
-    if (esp_transport_write(client->transport, (const char*) frame, (int) header_length,
-                            BACKEND_SEND_TIMEOUT_MS) != (int) header_length) {
-        return false;
-    }
-
     uint8_t mask_bytes[4] = {
         (uint8_t) (mask >> 24),
         (uint8_t) (mask >> 16),
         (uint8_t) (mask >> 8),
         (uint8_t) mask,
     };
+    
+    frame[header_length++] = mask_bytes[0];
+    frame[header_length++] = mask_bytes[1];
+    frame[header_length++] = mask_bytes[2];
+    frame[header_length++] = mask_bytes[3];
+
+    if (esp_transport_write(client->transport, (const char*) frame, (int) header_length,
+                            BACKEND_SEND_TIMEOUT_MS) != (int) header_length) {
+        return false;
+    }
+
+    if (length == 0) {
+        return true;
+    }
+
     size_t offset = 0;
     uint8_t chunk[128];
+    
     while (offset < length) {
         size_t count = length - offset;
         if (count > sizeof(chunk)) {
@@ -83,6 +91,9 @@ void backend_ws_close(backend_ws_t* client) {
     if (client == NULL) {
         return;
     }
+    
+    client->connected = false;
+    
     if (client->ws != NULL) {
         esp_transport_close(client->ws);
         esp_transport_destroy(client->ws);
@@ -92,15 +103,15 @@ void backend_ws_close(backend_ws_t* client) {
         esp_transport_destroy(client->transport);
         client->transport = NULL;
     }
-    client->connected = false;
 }
 
-esp_err_t backend_ws_connect(backend_ws_t* client, const char* device_key) {
-    if (client == NULL || device_key == NULL || device_key[0] == '\0') {
+esp_err_t backend_ws_connect(backend_ws_t* client, const char* host, int port, const char* device_key) {
+    if (client == NULL || host == NULL || device_key == NULL || device_key[0] == '\0') {
         return ESP_ERR_INVALID_ARG;
     }
 
     backend_ws_close(client);
+    
     client->transport = esp_transport_tcp_init();
     if (client->transport == NULL) {
         return ESP_FAIL;
@@ -115,21 +126,22 @@ esp_err_t backend_ws_connect(backend_ws_t* client, const char* device_key) {
     char path[128];
     snprintf(path, sizeof(path), "/?key=%s", device_key);
     esp_transport_ws_set_path(client->ws, path);
+    
     esp_transport_ws_config_t ws_config = {
         .propagate_control_frames = true,
     };
     esp_transport_ws_set_config(client->ws, &ws_config);
 
     char headers[192];
-    snprintf(headers, sizeof(headers), "key: %s\r\nOrigin: http://%s\r\n", device_key, BACKEND_HOST);
+    snprintf(headers, sizeof(headers), "key: %s\r\nOrigin: http://%s\r\n", device_key, host);
     esp_transport_ws_set_headers(client->ws, headers);
     esp_transport_ws_set_user_agent(client->ws, "Alarma/1.0.0");
 
-    if (esp_transport_connect(client->ws, BACKEND_HOST, BACKEND_PORT,
-                              BACKEND_CONNECT_TIMEOUT_MS) != 0) {
+    if (esp_transport_connect(client->ws, host, port, BACKEND_CONNECT_TIMEOUT_MS) != 0) {
         backend_ws_close(client);
         return ESP_FAIL;
     }
+    
     if (esp_transport_ws_get_upgrade_request_status(client->ws) != 101) {
         backend_ws_close(client);
         return ESP_FAIL;
@@ -151,6 +163,7 @@ int backend_ws_read_message(backend_ws_t* client, char* buffer, int buffer_size)
     if (client == NULL || buffer == NULL || buffer_size < 2 || !client->connected) {
         return -1;
     }
+    
     int poll = esp_transport_poll_read(client->ws, BACKEND_POLL_TIMEOUT_MS);
     if (poll == 0) {
         return 0;
@@ -158,12 +171,17 @@ int backend_ws_read_message(backend_ws_t* client, char* buffer, int buffer_size)
     if (poll < 0) {
         return -1;
     }
+    
     int length = esp_transport_read(client->ws, buffer, buffer_size - 1, BACKEND_READ_TIMEOUT_MS);
+    
     if (length <= 0) {
-        return length;
+        return -1; 
     }
+    
     buffer[length] = '\0';
+    
     ws_transport_opcodes_t opcode = esp_transport_ws_get_read_opcode(client->ws);
+    
     if (opcode == WS_TRANSPORT_OPCODES_PING) {
         send_frame(client, WS_TRANSPORT_OPCODES_PONG, buffer);
         return 0;
@@ -171,5 +189,6 @@ int backend_ws_read_message(backend_ws_t* client, char* buffer, int buffer_size)
     if (opcode == WS_TRANSPORT_OPCODES_CLOSE) {
         return -2;
     }
+    
     return opcode == WS_TRANSPORT_OPCODES_TEXT ? length : 0;
 }

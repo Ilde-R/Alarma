@@ -1,3 +1,6 @@
+#include <stddef.h>
+#include <stdint.h>
+#include "esp_err.h"
 #include "nvs.h"
 #include "backend_config.h"
 
@@ -29,28 +32,18 @@ esp_err_t backend_config_load(backend_config_t* config) {
 
     nvs_handle_t handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
-    if (err == ESP_ERR_NVS_NOT_FOUND) {
-        return ESP_OK;
-    }
+    
     if (err != ESP_OK) {
-        return err;
+        return (err == ESP_ERR_NVS_NOT_FOUND) ? ESP_OK : err;
     }
 
     size_t length = sizeof(config->threshold);
-    if (nvs_get_blob(handle, NVS_KEY_UMBRAL, &config->threshold, &length) != ESP_OK ||
-        length != sizeof(config->threshold)) {
-        config->threshold = BACKEND_DEFAULT_UMBRAL;
-    }
+    nvs_get_blob(handle, NVS_KEY_UMBRAL, &config->threshold, &length);
 
     length = sizeof(config->scale);
-    if (nvs_get_blob(handle, NVS_KEY_ESCALA, &config->scale, &length) != ESP_OK ||
-        length != sizeof(config->scale)) {
-        config->scale = BACKEND_DEFAULT_SCALE;
-    }
+    nvs_get_blob(handle, NVS_KEY_ESCALA, &config->scale, &length);
 
-    if (nvs_get_u32(handle, NVS_KEY_INTERVALO, &config->interval_ms) != ESP_OK) {
-        config->interval_ms = BACKEND_DEFAULT_INTERVAL_MS;
-    }
+    nvs_get_u32(handle, NVS_KEY_INTERVALO, &config->interval_ms);
 
     nvs_close(handle);
     return ESP_OK;
@@ -74,6 +67,7 @@ esp_err_t backend_config_save(const backend_config_t* config) {
     if (err == ESP_OK) {
         err = nvs_set_u32(handle, NVS_KEY_INTERVALO, config->interval_ms);
     }
+    
     if (err == ESP_OK) {
         err = nvs_commit(handle);
     }
