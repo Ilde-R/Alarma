@@ -15,6 +15,12 @@ static const char* TAG = "PROVISION";
 
 static httpd_handle_t s_server = NULL;
 
+static void delayed_restart_task(void* arg) {
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    esp_restart();
+    vTaskDelete(NULL); 
+}
+
 static bool json_get_string(const char* json, const char* key, char* out, size_t out_len) {
     size_t key_len = strlen(key);
     const char* p = json;
@@ -107,10 +113,11 @@ static esp_err_t configure_handler(httpd_req_t* req) {
         return ESP_OK;
     }
 
-    httpd_resp_sendstr(req, "OK. Guardado. Reiniciando...");
-    ESP_LOGI(TAG, "Credenciales guardadas. Reiniciando en 1s...");
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    esp_restart();
+    httpd_resp_sendstr(req, "OK");
+    ESP_LOGI(TAG, "Credenciales guardadas. Reiniciando en 1.5s...");
+
+    xTaskCreate(delayed_restart_task, "RestartTask", 2048, NULL, 5, NULL);
+
     return ESP_OK;
 }
 

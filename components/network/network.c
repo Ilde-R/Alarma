@@ -26,26 +26,8 @@ static char s_device_name[NETWORK_DEVICE_NAME_MAX_LEN] = "";
 static char s_ip[NETWORK_IP_STR_LEN] = "0.0.0.0";
 
 static uint32_t s_sta_network_fails = 0;
-static uint32_t s_sta_backoff_ms = 2000;
 static network_rescue_cb_t s_rescue_cb = NULL;
 static bool s_rescue_notified = false;
-
-static bool reason_is_network_failure(uint8_t reason) {
-    return reason == WIFI_REASON_NO_AP_FOUND ||
-           reason == WIFI_REASON_AUTH_FAIL ||
-           reason == WIFI_REASON_HANDSHAKE_TIMEOUT;
-}
-
-static const char* reason_str(uint8_t reason) {
-    switch (reason) {
-        case WIFI_REASON_NO_AP_FOUND: return "NO_AP_FOUND";
-        case WIFI_REASON_AUTH_FAIL: return "AUTH_FAIL (SSID/pass incorrectos)";
-        case WIFI_REASON_AUTH_EXPIRE: return "AUTH_EXPIRE (router no responde)";
-        case WIFI_REASON_CONNECTION_FAIL: return "CONNECTION_FAIL";
-        case WIFI_REASON_HANDSHAKE_TIMEOUT: return "HANDSHAKE_TIMEOUT (pass incorrecta)";
-        default: return "OTRO";
-    }
-}
 
 static esp_err_t nvs_load_credentials(void) {
     nvs_handle_t handle;
@@ -94,28 +76,20 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         }
     } 
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        wifi_event_sta_disconnected_t* event = (wifi_event_sta_disconnected_t*) event_data;
         s_status = NETWORK_CONNECTING;
+        s_sta_network_fails++;
+        
+        ESP_LOGW(TAG, "Fallo al conectar. Intento %lu/%d", 
+                 (unsigned long) s_sta_network_fails, NETWORK_MAX_STA_NETWORK_FAILS);
 
-
-        ESP_LOGW(TAG, "Disconnected from router. Reason: %d (%s). Retrying now...",
-                 event->reason, reason_str(event->reason));
-        esp_wifi_connect();
-
-        if (reason_is_network_failure(event->reason)) {
-            s_sta_network_fails++;
-            ESP_LOGW(TAG, "Fallo de red/credenciales %lu/%d. Reintentando sin abrir portal...",
-                     (unsigned long) s_sta_network_fails, NETWORK_MAX_STA_NETWORK_FAILS);
-            if (s_sta_network_fails >= NETWORK_MAX_STA_NETWORK_FAILS && !s_rescue_notified) {
-                s_rescue_notified = true;
-                ESP_LOGW(TAG, "La red guardada ya no es alcanzable (%lu fallos). Abriendo portal de provisionamiento...",
-                         (unsigned long) s_sta_network_fails);
-                if (s_rescue_cb != NULL) {
-                    s_rescue_cb();
-                }
+        if (s_sta_network_fails >= NETWORK_MAX_STA_NETWORK_FAILS && !s_rescue_notified) {
+            s_rescue_notified = true;
+            ESP_LOGW(TAG, "Red inalcanzable tras varios intentos. Abriendo portal...");
+            if (s_rescue_cb != NULL) {
+                s_rescue_cb();
             }
-        } else {
-            ESP_LOGW(TAG, "Desconexion transitoria (no es fallo de red). No se abrira el portal.");
+        } else if (!s_rescue_notified) {
+            esp_wifi_connect();
         }
     } 
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
@@ -123,8 +97,9 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         s_status = NETWORK_CONNECTED;
         s_sta_network_fails = 0;
         s_rescue_notified = false;
+        
         snprintf(s_ip, NETWORK_IP_STR_LEN, IPSTR, IP2STR(&event->ip_info.ip));
-        ESP_LOGI(TAG, "Successfully connected! Assigned IP: %s", s_ip);
+        ESP_LOGI(TAG, "Conexión exitosa. IP asignada: %s", s_ip);
     }
 }
 
