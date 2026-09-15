@@ -1,7 +1,6 @@
 #include "sensor.h"
 #include "hl100d.h"
 #include "led.h"
-#include "esp_adc/adc_oneshot.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
