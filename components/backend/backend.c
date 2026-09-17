@@ -139,7 +139,7 @@ esp_err_t backend_init(void) {
     }
     
     sensor_set_threshold(s_config.threshold);
-    sensor_set_scale(s_config.scale); 
+    // sensor_set_scale(s_config.scale); 
     
     s_previous_alert = sensor_get_alert();
 

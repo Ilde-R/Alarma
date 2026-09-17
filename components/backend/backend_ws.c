@@ -6,6 +6,8 @@
 #include "esp_transport_tcp.h"
 #include "esp_transport_ws.h"
 #include "backend_ws.h"
+#include "nvs_flash.h"
+#include "esp_system.h"
 
 #define BACKEND_TAG "BACKEND_WS"
 #define BACKEND_HOST "78.13.219.157"
@@ -143,6 +145,17 @@ esp_err_t backend_ws_connect(backend_ws_t* client, const char* host, int port, c
     }
     
     if (esp_transport_ws_get_upgrade_request_status(client->ws) != 101) {
+        int http_status = esp_transport_ws_get_upgrade_request_status(client->ws);
+        ESP_LOGE(BACKEND_TAG, "Rechazado por el servidor. HTTP Status: %d", http_status);
+
+        if(http_status == 401 || http_status == 403) {
+            ESP_LOGE(BACKEND_TAG, "Credenciales invalidas. Borrando NVS...");
+            backend_ws_close(client);
+            nvs_flash_erase();
+            vTaskDelay(pdMS_TO_TICKS(3000));
+            esp_restart();
+        }
+
         backend_ws_close(client);
         return ESP_FAIL;
     }
@@ -161,29 +174,29 @@ bool backend_ws_send_text(backend_ws_t* client, const char* payload) {
 
 int backend_ws_read_message(backend_ws_t* client, char* buffer, int buffer_size) {
     if (client == NULL || buffer == NULL || buffer_size < 2 || !client->connected) {
-        return -1;
+        return -10; 
     }
     
     int poll = esp_transport_poll_read(client->ws, BACKEND_POLL_TIMEOUT_MS);
     if (poll == 0) {
-        return 0;
+        return 0; 
     }
     if (poll < 0) {
-        return -1;
+        return -11; 
     }
     
     int length = esp_transport_read(client->ws, buffer, buffer_size - 1, BACKEND_READ_TIMEOUT_MS);
     
-    if (length <= 0) {
-        return -1; 
+    if (length < 0) {
+        return -12; 
     }
     
     buffer[length] = '\0';
-    
     ws_transport_opcodes_t opcode = esp_transport_ws_get_read_opcode(client->ws);
     
     if (opcode == WS_TRANSPORT_OPCODES_PING) {
-        send_frame(client, WS_TRANSPORT_OPCODES_PONG, buffer);
+        // ESP_LOGI(BACKEND_TAG, "Ping nativo recibido, enviando Pong...");
+        send_frame(client, WS_TRANSPORT_OPCODES_PONG, length > 0 ? buffer : NULL);
         return 0;
     }
     if (opcode == WS_TRANSPORT_OPCODES_CLOSE) {
