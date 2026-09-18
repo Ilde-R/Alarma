@@ -6,6 +6,7 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include <math.h>
+#include "esp_task_wdt.h" 
 
 #define SENSOR_ADC_UNIT ADC_UNIT_1
 #define SENSOR_ADC_CHANNEL ADC_CHANNEL_0
@@ -46,14 +47,28 @@ esp_err_t sensor_init(void) {
 static void sensor_task(void *pvParameters) {
     hl100d_reading_t reading;
     
+    esp_task_wdt_config_t twdt_config = {
+        .timeout_ms = 10000,   
+        .idle_core_mask = 0,   
+        .trigger_panic = true 
+    };
+    
+    esp_task_wdt_init(&twdt_config); 
+    
+    esp_task_wdt_add(NULL); 
+    
     while (1) {
+        esp_task_wdt_reset(); 
+
         if (hl100d_read(&pressure_sensor, &reading) == ESP_OK) {
             float new_pressure = reading.pressure_kpa * KPA_TO_PSI;
 
             if (new_pressure <= SENSOR_MAX_PSI) {
                 
-                if (fabs(new_pressure - last_valid_pressure) > SUSPICIOUS_JUMP_PSI) {
-                    ESP_LOGW(TAG, "Salto de presion! Anterior: %.2f PSI, Nuevo: %.2f PSI", last_valid_pressure, new_pressure);
+                 bool is_startup = (last_valid_pressure < 0.1f);
+                
+                if (!is_startup && fabs(new_pressure - last_valid_pressure) > SUSPICIOUS_JUMP_PSI) {
+                    ESP_LOGW(TAG, "Salto de presion ignorado! Anterior: %.2f PSI, Nuevo: %.2f PSI", last_valid_pressure, new_pressure);
                 } else {
                     current_pressure = new_pressure;
                     last_valid_pressure = new_pressure;

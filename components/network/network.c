@@ -79,27 +79,32 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         s_status = NETWORK_CONNECTING;
         s_sta_network_fails++;
         
-        ESP_LOGW(TAG, "Fallo al conectar. Intento %lu/%d", 
-                 (unsigned long) s_sta_network_fails, NETWORK_MAX_STA_NETWORK_FAILS);
+        ESP_LOGW(TAG, "Fallo al conectar. Intento %lu", (unsigned long) s_sta_network_fails);
 
         if (s_sta_network_fails >= NETWORK_MAX_STA_NETWORK_FAILS && !s_rescue_notified) {
             s_rescue_notified = true;
-            ESP_LOGW(TAG, "Red inalcanzable tras varios intentos. Abriendo portal...");
+            ESP_LOGW(TAG, "Red inalcanzable. Abriendo portal de rescate, pero seguiremos intentando...");
             if (s_rescue_cb != NULL) {
                 s_rescue_cb();
             }
-        } else if (!s_rescue_notified) {
-            esp_wifi_connect();
-        }
+        } 
+        
+        esp_wifi_connect();
     } 
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        
+        if (s_rescue_notified) {
+            ESP_LOGI(TAG, "¡El WiFi regreso! Restaurando estado normal...");
+            network_ap_stop(); 
+        }
+
         s_status = NETWORK_CONNECTED;
         s_sta_network_fails = 0;
         s_rescue_notified = false;
         
         snprintf(s_ip, NETWORK_IP_STR_LEN, IPSTR, IP2STR(&event->ip_info.ip));
-        ESP_LOGI(TAG, "Conexión exitosa. IP asignada: %s", s_ip);
+        ESP_LOGI(TAG, "Conexion exitosa. IP asignada: %s", s_ip);
     }
 }
 

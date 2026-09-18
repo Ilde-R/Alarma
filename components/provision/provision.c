@@ -76,6 +76,10 @@ static bool json_get_string(const char* json, const char* key, char* out, size_t
 }
 
 static esp_err_t configure_handler(httpd_req_t* req) {
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type");
+
     char body[PROVISION_MAX_BODY + 1];
     char ssid[NETWORK_SSID_MAX_LEN];
     char pass[NETWORK_PASS_MAX_LEN] = "";
@@ -121,6 +125,37 @@ static esp_err_t configure_handler(httpd_req_t* req) {
     return ESP_OK;
 }
 
+static esp_err_t options_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type");
+    httpd_resp_send(req, NULL, 0); 
+    return ESP_OK;
+}
+
+static esp_err_t html_handler(httpd_req_t *req) {
+    const char* html_page = 
+        "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<style>body{font-family:sans-serif; padding:20px; background:#f4f4f9;} "
+        "input, button{width:100%; padding:10px; margin:8px 0; border-radius:5px; border:1px solid #ccc; box-sizing:border-box;}"
+        "button{background:#007BFF; color:white; font-weight:bold; border:none; padding:15px; margin-top:15px;}</style></head>"
+        "<body><h2>Configurar Sensor</h2>"
+        "<input type='text' id='s' placeholder='Nombre del WiFi (SSID)'>"
+        "<input type='password' id='p' placeholder='Contrase&ntilde;a del WiFi'>"
+        "<input type='text' id='k' placeholder='Device Key'>"
+        "<input type='text' id='n' placeholder='Nombre del Equipo'>"
+        "<button onclick='enviar()'>Guardar y Conectar</button>"
+        "<script>function enviar(){"
+        "var d={ssid:document.getElementById('s').value, pass:document.getElementById('p').value,"
+        "deviceKey:document.getElementById('k').value, name:document.getElementById('n').value};"
+        "fetch('/configure',{method:'POST',body:JSON.stringify(d)}).then(r=>alert('Listo! El equipo se reiniciara. Ya puedes cerrar esta pagina.'));"
+        "}</script></body></html>";
+
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_send(req, html_page, strlen(html_page));
+    return ESP_OK;
+}
+
 esp_err_t provision_http_start(void) {
     if (s_server != NULL) {
         return ESP_OK;
@@ -135,20 +170,16 @@ esp_err_t provision_http_start(void) {
         return err;
     }
 
-    httpd_uri_t uri = {
-        .uri = "/configure",
-        .method = HTTP_POST,
-        .handler = configure_handler,
-    };
-    err = httpd_register_uri_handler(s_server, &uri);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Fallo al registrar /configure: %s", esp_err_to_name(err));
-        httpd_stop(s_server);
-        s_server = NULL;
-        return err;
-    }
+    httpd_uri_t uri_get = { .uri = "/", .method = HTTP_GET, .handler = html_handler };
+    httpd_register_uri_handler(s_server, &uri_get);
 
-    ESP_LOGI(TAG, "Servidor HTTP activo en 192.168.4.1: POST /configure");
+    httpd_uri_t uri_options = { .uri = "/configure", .method = HTTP_OPTIONS, .handler = options_handler };
+    httpd_register_uri_handler(s_server, &uri_options);
+
+    httpd_uri_t uri_post = { .uri = "/configure", .method = HTTP_POST, .handler = configure_handler };
+    httpd_register_uri_handler(s_server, &uri_post);
+
+    ESP_LOGI(TAG, "Servidor HTTP activo en 192.168.4.1 (Web y POST)");
     return ESP_OK;
 }
 
@@ -172,7 +203,7 @@ esp_err_t provision_start(void) {
         return err;
     }
 
-    ESP_LOGI(TAG, "Modo provisionamiento activo: WiFi '%s' (abierta) | IP 192.168.4.1 | POST /configure",
+    ESP_LOGI(TAG, "Modo provisionamiento activo: WiFi '%s' (abierta) | IP 192.168.4.1 | Web/POST",
              NETWORK_AP_SSID);
     return ESP_OK;
 }

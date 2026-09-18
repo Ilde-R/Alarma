@@ -1,6 +1,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
+#include "esp_log.h" // <-- Agregado para imprimir información de la memoria
 #include "nvs.h"
 #include "backend_config.h"
 
@@ -12,6 +13,8 @@
 #define BACKEND_DEFAULT_UMBRAL 50.0f
 #define BACKEND_DEFAULT_SCALE 25000.0f
 #define BACKEND_DEFAULT_INTERVAL_MS 1000
+
+static const char* TAG_CFG = "BACKEND_CONFIG";
 
 void backend_config_set_defaults(backend_config_t* config) {
     if (config == NULL) {
@@ -53,6 +56,19 @@ esp_err_t backend_config_save(const backend_config_t* config) {
     if (config == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
+
+    backend_config_t current_config;
+    backend_config_load(&current_config);
+
+    if (current_config.threshold == config->threshold &&
+        current_config.scale == config->scale &&
+        current_config.interval_ms == config->interval_ms) {
+        
+        ESP_LOGI(TAG_CFG, "Configuracion sin cambios. Omitiendo escritura en NVS.");
+        return ESP_OK; 
+    }
+
+    ESP_LOGI(TAG_CFG, "Nuevos valores detectados. Guardando en NVS...");
 
     nvs_handle_t handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);

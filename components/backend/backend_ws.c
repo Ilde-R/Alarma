@@ -8,6 +8,7 @@
 #include "backend_ws.h"
 #include "nvs_flash.h"
 #include "esp_system.h"
+#include "network.h"
 
 #define BACKEND_TAG "BACKEND_WS"
 #define BACKEND_HOST "78.13.219.157"
@@ -149,9 +150,11 @@ esp_err_t backend_ws_connect(backend_ws_t* client, const char* host, int port, c
         ESP_LOGE(BACKEND_TAG, "Rechazado por el servidor. HTTP Status: %d", http_status);
 
         if(http_status == 401 || http_status == 403) {
-            ESP_LOGE(BACKEND_TAG, "Credenciales invalidas. Borrando NVS...");
+            ESP_LOGE(BACKEND_TAG, "Credenciales invalidas. Borrando SOLO credenciales WiFi/Auth...");
             backend_ws_close(client);
-            nvs_flash_erase();
+            
+            network_clear_credentials();
+            
             vTaskDelay(pdMS_TO_TICKS(3000));
             esp_restart();
         }
@@ -195,7 +198,6 @@ int backend_ws_read_message(backend_ws_t* client, char* buffer, int buffer_size)
     ws_transport_opcodes_t opcode = esp_transport_ws_get_read_opcode(client->ws);
     
     if (opcode == WS_TRANSPORT_OPCODES_PING) {
-        // ESP_LOGI(BACKEND_TAG, "Ping nativo recibido, enviando Pong...");
         send_frame(client, WS_TRANSPORT_OPCODES_PONG, length > 0 ? buffer : NULL);
         return 0;
     }

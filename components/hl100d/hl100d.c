@@ -1,5 +1,6 @@
 #include "hl100d.h"
 #include "esp_log.h"
+#include "esp_rom_sys.h"
 
 static const char*TAG = "HL100D_DRIVER";
 
@@ -36,12 +37,24 @@ esp_err_t hl100d_init(hl100d_t*sensor, const hl100d_config_t*config) {
 esp_err_t hl100d_read(hl100d_t*sensor, hl100d_reading_t*reading) {
     if(sensor == NULL || reading == NULL) return ESP_ERR_INVALID_ARG;
 
-    int raw_val = 0;
-    esp_err_t err = adc_oneshot_read(sensor->adc_handle, sensor->config.adc_channel, &raw_val);
-    if(err != ESP_OK) {
-        ESP_LOGE(TAG, "Fallo de lectura en el ADC");
-        return err;
+    const int NUM_SAMPLES = 16;
+    uint32_t sum_raw = 0;
+    int current_raw = 0;
+
+    for (int i = 0; i < NUM_SAMPLES; i++) {
+        esp_err_t err = adc_oneshot_read(sensor->adc_handle, sensor->config.adc_channel, &current_raw);
+        
+        if(err != ESP_OK) {
+            ESP_LOGE(TAG, "Fallo de lectura en el ADC en la muestra %d", i);
+            return err;
+        }
+        
+        sum_raw += current_raw;
+        
+        esp_rom_delay_us(50); 
     }
+
+    int raw_val = sum_raw / NUM_SAMPLES;
 
     reading->raw_adc = raw_val;
 

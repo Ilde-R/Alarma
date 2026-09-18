@@ -98,10 +98,10 @@ void backend_protocol_send_pressure(backend_ws_t* ws, int64_t timestamp_ms) {
              "{\"event\":\"pressure_reading\",\"data\":{\"psi\":%.2f,\"ts\":%llu}}",
              (double) psi, (unsigned long long) timestamp_ms);
     
-    ESP_LOGI(BACKEND_TAG, "Enviando JSON (device_info): %s", payload);
+    ESP_LOGI(BACKEND_TAG, "Enviando JSON (pressure_reading): %s", payload);
              
     if (backend_ws_send_text(ws, payload)) {
-        ESP_LOGI(BACKEND_TAG, "Enviado: %s", payload);
+        ESP_LOGD(BACKEND_TAG, "Enviado: %s", payload);
     } else {
         ESP_LOGW(BACKEND_TAG, "Fallo al enviar lectura");
     }
@@ -156,11 +156,6 @@ void backend_protocol_handle_message(backend_ws_t* ws, const char* message,
             config->interval_ms = (uint32_t) strtoul(value, NULL, 10);
         }        
         value = json_get_number_str(message, "scaleFactor");
-        // if (value != NULL) {
-        //      config->scale = strtof(value, NULL);
-        //      sensor_set_scale(config->scale);
-        //      ESP_LOGI(BACKEND_TAG, "NUEVA ESCALA RECIBIDA: %.2f", (double) config->scale);
-        // }
         
         backend_config_save(config);
         const char* ack_payload = "{\"event\":\"config_ack\",\"data\":{\"ok\":true}}";
@@ -168,7 +163,7 @@ void backend_protocol_handle_message(backend_ws_t* ws, const char* message,
         backend_ws_send_text(ws, ack_payload);
         
     } else if (strcmp(event, "reading_ack") == 0) {
-        ESP_LOGI(BACKEND_TAG, "Lectura confirmada por servidor");
+        ESP_LOGD(BACKEND_TAG, "Lectura confirmada por servidor");
     } else if (strcmp(event, "auth_error") == 0) {
         *credentials_invalid = true;
         backend_ws_close(ws);

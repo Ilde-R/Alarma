@@ -70,7 +70,7 @@ static void backend_task(void* arg) {
                 continue;
             }
 
-            ESP_LOGI(BACKEND_TAG, "WebSocket conectado exitosamente");
+            ESP_LOGI(BACKEND_TAG, "WebSocket conectado exitosamente a NestJS");
             
             s_ws_reconnect_ms = WS_RECONNECT_INITIAL_MS;
 
@@ -87,10 +87,8 @@ static void backend_task(void* arg) {
             int length = backend_ws_read_message(&s_ws, buffer, sizeof(buffer));
             
             if (length == -2) {
-                ESP_LOGW(BACKEND_TAG, "Servidor cerro WS. Abriendo provisionamiento...");
+                ESP_LOGW(BACKEND_TAG, "Servidor NestJS cerro WS (Mantenimiento/Reinicio). Esperando para reconectar...");
                 backend_ws_close(&s_ws);
-                provision_start();
-                s_reprovisioning = true;
                 continue;
             }
             
@@ -139,7 +137,6 @@ esp_err_t backend_init(void) {
     }
     
     sensor_set_threshold(s_config.threshold);
-    // sensor_set_scale(s_config.scale); 
     
     s_previous_alert = sensor_get_alert();
 
