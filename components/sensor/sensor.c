@@ -200,6 +200,8 @@ static void sensor_task(void *arg)
 
 
     last_log_time = xTaskGetTickCount();
+    
+     int consecutive_alarms = 0;
 
 
     for (;;) {
@@ -311,11 +313,26 @@ static void sensor_task(void *arg)
         previous_pressure = psi;
 
 
-        /*
-         * Comprobar umbral.
-         */
-        bool is_alert = (psi <= s_threshold);
-
+        bool is_alert = false;
+        
+        if (psi <= s_threshold) {
+            consecutive_alarms++;
+            
+            if (consecutive_alarms >= 3) {
+                is_alert = true;
+                
+                if (consecutive_alarms > 10) consecutive_alarms = 3; 
+            } else {
+                ESP_LOGW(
+                    SENSOR_TAG, 
+                    "Posible caida o cero detectado. Confirmando (%d/3)...", 
+                    consecutive_alarms
+                );
+            }
+        } else {
+            consecutive_alarms = 0;
+            is_alert = false;
+        }
         s_pressure = psi;
         s_alert = is_alert;
         
@@ -331,7 +348,6 @@ static void sensor_task(void *arg)
             SENSOR_OUTPUT_PIN,
             is_alert ? 1 : 0
         );
-
 
         /*
          * Log cada segundo.
