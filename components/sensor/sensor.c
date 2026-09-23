@@ -1,5 +1,5 @@
 #include "sensor.h"
-#include "hl100d.h"
+#include "xgzp6847a.h"
 #include "led.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -13,7 +13,7 @@
 
 static const char *TAG = "SENSOR_LOGIC";
 
-static hl100d_t pressure_sensor;
+static xgzp6847a_t pressure_sensor;
 static float current_pressure = 0.0f;  
 static float last_valid_pressure = 0.0f;
 static float current_threshold = SENSOR_DEFAULT_UMBRAL;
@@ -33,7 +33,7 @@ esp_err_t sensor_init(void) {
 
     led_init();
 
-    hl100d_config_t hl_config = {
+    xgzp6847a_config_t hl_config = {
         .adc_unit = SENSOR_ADC_UNIT,
         .adc_channel = SENSOR_ADC_CHANNEL,
         .offset_mv = SENSOR_OFFSET_MV,
@@ -41,11 +41,11 @@ esp_err_t sensor_init(void) {
         .max_pressure_kpa = SENSOR_MAX_KPA
     };
 
-    return hl100d_init(&pressure_sensor, &hl_config);
+    return xgzp6847a_init(&pressure_sensor, &hl_config);
 }
 
 static void sensor_task(void *pvParameters) {
-    hl100d_reading_t reading;
+    xgzp6847a_reading_t reading;
     
     esp_task_wdt_config_t twdt_config = {
         .timeout_ms = 10000,   
@@ -60,7 +60,7 @@ static void sensor_task(void *pvParameters) {
     while (1) {
         esp_task_wdt_reset(); 
 
-        if (hl100d_read(&pressure_sensor, &reading) == ESP_OK) {
+        if (xgzp6847a_read(&pressure_sensor, &reading) == ESP_OK) {
             float new_pressure = reading.pressure_kpa * KPA_TO_PSI;
 
             if (new_pressure <= SENSOR_MAX_PSI) {

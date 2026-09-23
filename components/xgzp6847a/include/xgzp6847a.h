@@ -1,5 +1,5 @@
-#ifndef HL100D_H
-#define HL100D_H
+#ifndef XGZP6847A_H
+#define XGZP6847A_H
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -10,7 +10,7 @@ typedef struct {
     float pressure_kpa;
     float voltage_mv;
     uint32_t raw_adc;
-} hl100d_reading_t;
+} xgzp6847a_reading_t;
 
 typedef struct {
     adc_unit_t adc_unit;
@@ -18,15 +18,15 @@ typedef struct {
     float offset_mv;
     float full_scale_mv;
     float max_pressure_kpa;
-} hl100d_config_t;
+} xgzp6847a_config_t;
 
 typedef struct {
     adc_oneshot_unit_handle_t adc_handle;
-    hl100d_config_t config;
-} hl100d_t;
+    xgzp6847a_config_t config;
+} xgzp6847a_t;
 
-esp_err_t hl100d_init(hl100d_t*sensor, const hl100d_config_t*config);
-esp_err_t hl100d_read(hl100d_t*sensor, hl100d_reading_t*reading);
+esp_err_t xgzp6847a_init(xgzp6847a_t*sensor, const xgzp6847a_config_t*config);
+esp_err_t xgzp6847a_read(xgzp6847a_t*sensor, xgzp6847a_reading_t*reading);
 
 
 #endif

@@ -1,10 +1,10 @@
-#include "hl100d.h"
+#include "xgzp6847a.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h"
 
-static const char*TAG = "HL100D_DRIVER";
+static const char*TAG = "XGZP6847A_DRIVER";
 
-esp_err_t hl100d_init(hl100d_t*sensor, const hl100d_config_t*config) {
+esp_err_t xgzp6847a_init(xgzp6847a_t*sensor, const xgzp6847a_config_t*config) {
     if(sensor == NULL || config == NULL){
         ESP_LOGE(TAG, "Punteros vacios");
         return ESP_ERR_INVALID_ARG;
@@ -34,7 +34,7 @@ esp_err_t hl100d_init(hl100d_t*sensor, const hl100d_config_t*config) {
     return err;
 }
 
-esp_err_t hl100d_read(hl100d_t*sensor, hl100d_reading_t*reading) {
+esp_err_t xgzp6847a_read(xgzp6847a_t*sensor, xgzp6847a_reading_t*reading) {
     if(sensor == NULL || reading == NULL) return ESP_ERR_INVALID_ARG;
 
     const int NUM_SAMPLES = 16;
