@@ -137,10 +137,11 @@ esp_err_t backend_init(void) {
     }
     
     sensor_set_threshold(s_config.threshold);
+    sensor_set_scale(s_config.scale);
     
     s_previous_alert = sensor_get_alert();
 
-    ESP_LOGI(BACKEND_TAG, "Backend listo. intervalo=%lu ms escala=%.2f umbral=%.2f",
+    ESP_LOGI(BACKEND_TAG, "Backend listo. intervalo=%lu ms escala=%.4f umbral=%.2f",
              (unsigned long) s_config.interval_ms,
              (double) s_config.scale,
              (double) s_config.threshold);

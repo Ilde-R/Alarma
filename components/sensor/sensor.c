@@ -17,6 +17,7 @@ static xgzp6847a_t pressure_sensor;
 static float current_pressure = 0.0f;  
 static float last_valid_pressure = 0.0f;
 static float current_threshold = SENSOR_DEFAULT_UMBRAL;
+static float current_scale = SENSOR_DEFAULT_SCALE;
 static bool alert_active = false;
 static int confirmation_counter = 0;
 
@@ -61,11 +62,11 @@ static void sensor_task(void *pvParameters) {
         esp_task_wdt_reset(); 
 
         if (xgzp6847a_read(&pressure_sensor, &reading) == ESP_OK) {
-            float new_pressure = reading.pressure_kpa * KPA_TO_PSI;
+            float new_pressure = reading.pressure_kpa * KPA_TO_PSI * current_scale;
 
             if (new_pressure <= SENSOR_MAX_PSI) {
                 
-                 bool is_startup = (last_valid_pressure < 0.1f);
+                bool is_startup = (last_valid_pressure < 0.1f);
                 
                 if (!is_startup && fabs(new_pressure - last_valid_pressure) > SUSPICIOUS_JUMP_PSI) {
                     ESP_LOGW(TAG, "Salto de presion ignorado! Anterior: %.2f PSI, Nuevo: %.2f PSI", last_valid_pressure, new_pressure);
@@ -122,4 +123,12 @@ void sensor_set_threshold(float psi) {
 
 bool sensor_get_alert(void) {
     return alert_active;
+}
+
+void sensor_set_scale(float scale) {
+    if(scale > 0.00f) {
+        current_scale = scale;
+        last_valid_pressure = 0.0f;
+        ESP_LOGI(TAG, "Escala actualizada a %.4f", current_scale);
+    }
 }

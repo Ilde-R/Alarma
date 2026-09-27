@@ -1,7 +1,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
-#include "esp_log.h" // <-- Agregado para imprimir información de la memoria
+#include "esp_log.h"
 #include "nvs.h"
 #include "backend_config.h"
 
@@ -10,8 +10,8 @@
 #define NVS_KEY_ESCALA "escala"
 #define NVS_KEY_INTERVALO "intervalo"
 
-#define BACKEND_DEFAULT_UMBRAL 50.0f
-#define BACKEND_DEFAULT_SCALE 25000.0f
+#define BACKEND_DEFAULT_UMBRAL 1.20f
+#define BACKEND_DEFAULT_SCALE 0.8095f
 #define BACKEND_DEFAULT_INTERVAL_MS 1000
 
 static const char* TAG_CFG = "BACKEND_CONFIG";

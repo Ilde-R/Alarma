@@ -34,8 +34,8 @@ esp_err_t xgzp6847a_init(xgzp6847a_t*sensor, const xgzp6847a_config_t*config) {
     return err;
 }
 
-esp_err_t xgzp6847a_read(xgzp6847a_t*sensor, xgzp6847a_reading_t*reading) {
-    if(sensor == NULL || reading == NULL) return ESP_ERR_INVALID_ARG;
+esp_err_t xgzp6847a_read(xgzp6847a_t *sensor, xgzp6847a_reading_t *reading) {
+    if (sensor == NULL || reading == NULL) return ESP_ERR_INVALID_ARG;
 
     const int NUM_SAMPLES = 16;
     uint32_t sum_raw = 0;
@@ -44,29 +44,26 @@ esp_err_t xgzp6847a_read(xgzp6847a_t*sensor, xgzp6847a_reading_t*reading) {
     for (int i = 0; i < NUM_SAMPLES; i++) {
         esp_err_t err = adc_oneshot_read(sensor->adc_handle, sensor->config.adc_channel, &current_raw);
         
-        if(err != ESP_OK) {
+        if (err != ESP_OK) {
             ESP_LOGE(TAG, "Fallo de lectura en el ADC en la muestra %d", i);
             return err;
-        }
+        } \
         
         sum_raw += current_raw;
-        
         esp_rom_delay_us(50); 
     }
 
     int raw_val = sum_raw / NUM_SAMPLES;
-
     reading->raw_adc = raw_val;
 
     float pin_voltage_mv = ((float)raw_val * 2500.0f) / 4095.0f;
-    float amplifier_gain = 100.0f;
-    float actual_sensor_voltage_mv = pin_voltage_mv / amplifier_gain;
 
-    reading->voltage_mv = actual_sensor_voltage_mv - sensor->config.offset_mv;
+    reading->voltage_mv = pin_voltage_mv - sensor->config.offset_mv;
 
-    reading->pressure_kpa = (reading->voltage_mv * sensor->config.max_pressure_kpa) / sensor->config.full_scale_mv;
-                 
-    if(reading->pressure_kpa < 0.0f) {
+    float span_mv = sensor->config.full_scale_mv - sensor->config.offset_mv;
+    reading->pressure_kpa = (reading->voltage_mv * sensor->config.max_pressure_kpa) / span_mv;
+                   
+    if (reading->pressure_kpa < 0.0f) {
         reading->pressure_kpa = 0.0f;
     }
 

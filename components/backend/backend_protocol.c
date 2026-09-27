@@ -155,7 +155,13 @@ void backend_protocol_handle_message(backend_ws_t* ws, const char* message,
         if (value != NULL) {
             config->interval_ms = (uint32_t) strtoul(value, NULL, 10);
         }        
+
         value = json_get_number_str(message, "scaleFactor");
+        if (value != NULL) {
+            config->scale = strtof(value, NULL);
+            sensor_set_scale(config->scale);
+            ESP_LOGI(BACKEND_TAG, "NUEVA ESCALA RECIBIDA: %.4f", (double) config->scale);
+        }
         
         backend_config_save(config);
         const char* ack_payload = "{\"event\":\"config_ack\",\"data\":{\"ok\":true}}";
