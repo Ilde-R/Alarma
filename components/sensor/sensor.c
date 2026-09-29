@@ -55,7 +55,6 @@ static void sensor_task(void *pvParameters) {
     };
     
     esp_task_wdt_init(&twdt_config); 
-    
     esp_task_wdt_add(NULL); 
     
     while (1) {
@@ -64,34 +63,37 @@ static void sensor_task(void *pvParameters) {
         if (xgzp6847a_read(&pressure_sensor, &reading) == ESP_OK) {
             float new_pressure = reading.pressure_kpa * KPA_TO_PSI * current_scale;
 
-            if (new_pressure <= SENSOR_MAX_PSI) {
+            if (new_pressure > SENSOR_MAX_PSI) {
+                ESP_LOGW(TAG, "Tope superado (Calculado: %.2f PSI | Escala: %.4f). Limitando a %.2f PSI", 
+                         new_pressure, current_scale, SENSOR_MAX_PSI);
+                new_pressure = SENSOR_MAX_PSI;
+            }
+
+            bool is_startup = (last_valid_pressure < 0.1f);
+            
+            if (!is_startup && fabs(new_pressure - last_valid_pressure) > SUSPICIOUS_JUMP_PSI) {
+                ESP_LOGW(TAG, "Salto de presion ignorado! Anterior: %.2f PSI, Nuevo: %.2f PSI", last_valid_pressure, new_pressure);
+            } else {
+                current_pressure = new_pressure;
+                last_valid_pressure = new_pressure;
                 
-                bool is_startup = (last_valid_pressure < 0.1f);
-                
-                if (!is_startup && fabs(new_pressure - last_valid_pressure) > SUSPICIOUS_JUMP_PSI) {
-                    ESP_LOGW(TAG, "Salto de presion ignorado! Anterior: %.2f PSI, Nuevo: %.2f PSI", last_valid_pressure, new_pressure);
+                if (current_pressure < current_threshold) {
+                    confirmation_counter++;
+                    if (confirmation_counter >= REQUIRED_CONFIRMATIONS) {
+                        alert_active = true;
+                        gpio_set_level(SENSOR_OUTPUT_PIN, 1);
+                        led_set_alert(true);
+                        ESP_LOGE(TAG, "ALARMA ACTIVA! Actual: %.2f PSI", current_pressure);
+                    }
                 } else {
-                    current_pressure = new_pressure;
-                    last_valid_pressure = new_pressure;
-                    
-                    if (current_pressure < current_threshold) {
-                        confirmation_counter++;
-                        if (confirmation_counter >= REQUIRED_CONFIRMATIONS) {
-                            alert_active = true;
-                            gpio_set_level(SENSOR_OUTPUT_PIN, 1);
-                            led_set_alert(true);
-                            ESP_LOGE(TAG, "ALARMA ACTIVA! Actual: %.2f PSI", current_pressure);
-                        }
+                    confirmation_counter = 0;
+                    if (alert_active) {
+                        alert_active = false;
+                        gpio_set_level(SENSOR_OUTPUT_PIN, 0); 
+                        led_set_alert(false);
+                        ESP_LOGI(TAG, "Presion normalizada. Alarma desactivada.");
                     } else {
-                        confirmation_counter = 0;
-                        if (alert_active) {
-                            alert_active = false;
-                            gpio_set_level(SENSOR_OUTPUT_PIN, 0); 
-                            led_set_alert(false);
-                            ESP_LOGI(TAG, "Presion normalizada. Alarma desactivada.");
-                        } else {
-                            ESP_LOGI(TAG, "Presion normal. Actual: %.2f PSI", current_pressure);
-                        }
+                        ESP_LOGI(TAG, "Presion normal. Actual: %.2f PSI", current_pressure);
                     }
                 }
             }
@@ -126,9 +128,11 @@ bool sensor_get_alert(void) {
 }
 
 void sensor_set_scale(float scale) {
-    if(scale > 0.00f) {
+    if (scale >= 0.05f && scale <= 10.0f) {
         current_scale = scale;
         last_valid_pressure = 0.0f;
         ESP_LOGI(TAG, "Escala actualizada a %.4f", current_scale);
+    } else {
+        ESP_LOGW(TAG, "Escala invalida ignorada (%.2f). Se mantiene %.4f", scale, current_scale);
     }
 }
