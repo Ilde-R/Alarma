@@ -6,6 +6,8 @@
 #include "esp_transport_ws.h"
 #include "esp_err.h"
 
+#define BACKEND_WS_READ_AUTH_CLOSE (-13)
+
 typedef struct {
     esp_transport_handle_t ws;
     esp_transport_handle_t transport;

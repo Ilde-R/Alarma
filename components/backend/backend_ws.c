@@ -11,7 +11,7 @@
 #include "network.h"
 
 #define BACKEND_TAG "BACKEND_WS"
-#define BACKEND_HOST "78.13.219.157"
+#define BACKEND_HOST "78.12.192.184"
 #define BACKEND_PORT 3000
 #define BACKEND_CONNECT_TIMEOUT_MS 10000
 #define BACKEND_POLL_TIMEOUT_MS 50
@@ -202,6 +202,13 @@ int backend_ws_read_message(backend_ws_t* client, char* buffer, int buffer_size)
         return 0;
     }
     if (opcode == WS_TRANSPORT_OPCODES_CLOSE) {
+        if (length >= 2) {
+            uint16_t close_code = ((uint16_t) (uint8_t) buffer[0] << 8) |
+                                  (uint8_t) buffer[1];
+            if (close_code == 4001) {
+                return BACKEND_WS_READ_AUTH_CLOSE;
+            }
+        }
         return -2;
     }
     

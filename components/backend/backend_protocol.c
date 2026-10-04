@@ -2,17 +2,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include "esp_log.h"
-#include "esp_system.h"
-#include "esp_timer.h"
-#include "esp_wifi.h"
-#include "network.h"
 #include "sensor.h"
 #include "backend_protocol.h"
 
 #define BACKEND_TAG "BACKEND_PROTOCOL"
 #define BACKEND_MSG_MAX 300
-#define BACKEND_INFO_MSG_MAX 512
-#define BACKEND_FW_VERSION "1.0.0"
 
 static bool json_get_string(const char* json, const char* key, char* out, size_t out_len) {
     if (json == NULL || key == NULL || out == NULL || out_len == 0) {
@@ -73,22 +67,6 @@ static const char* json_get_number_str(const char* json, const char* key) {
     return NULL;
 }
 
-static void json_escape(const char* input, char* output, size_t output_length) {
-    if (output_length == 0) {
-        return;
-    }
-    size_t out = 0;
-    for (const unsigned char* current = (const unsigned char*) input;
-         *current != '\0' && out + 1 < output_length; current++) {
-        if (*current == '"' || *current == '\\') {
-            if (out + 2 >= output_length) break;
-            output[out++] = '\\';
-        }
-        output[out++] = (char) *current;
-    }
-    output[out] = '\0';
-}
-
 void backend_protocol_send_pressure(backend_ws_t* ws, int64_t timestamp_ms) {
     if (ws == NULL) return;
 
@@ -105,32 +83,6 @@ void backend_protocol_send_pressure(backend_ws_t* ws, int64_t timestamp_ms) {
     } else {
         ESP_LOGW(BACKEND_TAG, "Fallo al enviar lectura");
     }
-}
-
-void backend_protocol_send_device_info(backend_ws_t* ws, const char* device_key) {
-    if (ws == NULL || device_key == NULL) return;
-
-    wifi_ap_record_t ap_info;
-    int rssi = 0;
-    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
-        rssi = ap_info.rssi;
-    }
-    char key_escaped[NETWORK_DEVICE_KEY_MAX_LEN * 2 + 1];
-    char name_escaped[NETWORK_DEVICE_NAME_MAX_LEN * 2 + 1];
-    char ssid_escaped[NETWORK_SSID_MAX_LEN * 2 + 1];
-    
-    json_escape(device_key, key_escaped, sizeof(key_escaped));
-    json_escape(network_get_device_name(), name_escaped, sizeof(name_escaped));
-    json_escape(network_get_ssid(), ssid_escaped, sizeof(ssid_escaped));
-
-    char payload[BACKEND_INFO_MSG_MAX]; 
-    snprintf(payload, sizeof(payload),
-             "{\"event\":\"device_info\",\"data\":{\"deviceKey\":\"%s\",\"name\":\"%s\",\"ssid\":\"%s\",\"firmware\":\"%s\",\"rssi\":%d,\"uptime\":%llu,\"heap\":%d}}",
-             key_escaped, name_escaped, ssid_escaped, BACKEND_FW_VERSION, rssi,
-             (unsigned long long) (esp_timer_get_time() / 1000),
-             (int) esp_get_free_heap_size());
-             
-    backend_ws_send_text(ws, payload);
 }
 
 void backend_protocol_handle_message(backend_ws_t* ws, const char* message,
@@ -151,10 +103,24 @@ void backend_protocol_handle_message(backend_ws_t* ws, const char* message,
             ESP_LOGI(BACKEND_TAG, "NUEVO UMBRAL RECIBIDO: %.2f", (double) config->threshold);
         }
     } else if (strcmp(event, "device_config_update") == 0) {
-        const char* value = json_get_number_str(message, "readIntervalMs");
+        const char* value = json_get_number_str(message, "saveIntervalSeconds");
         if (value != NULL) {
-            config->interval_ms = (uint32_t) strtoul(value, NULL, 10);
-        }        
+            char* end = NULL;
+            unsigned long seconds = strtoul(value, &end, 10);
+            while (end != NULL && (*end == ' ' || *end == '\t' ||
+                                   *end == '\n' || *end == '\r')) {
+                end++;
+            }
+            if (end != value && end != NULL &&
+                (*end == ',' || *end == '}') &&
+                seconds > 0 && seconds <= UINT32_MAX / 1000U) {
+                config->interval_ms = (uint32_t) seconds * 1000U;
+                ESP_LOGI(BACKEND_TAG, "NUEVO INTERVALO RECIBIDO: %lu segundos",
+                         seconds);
+            } else {
+                ESP_LOGW(BACKEND_TAG, "Intervalo saveIntervalSeconds invalido; se conserva el actual");
+            }
+        }
 
         value = json_get_number_str(message, "scaleFactor");
         if (value != NULL) {
@@ -164,10 +130,6 @@ void backend_protocol_handle_message(backend_ws_t* ws, const char* message,
         }
         
         backend_config_save(config);
-        const char* ack_payload = "{\"event\":\"config_ack\",\"data\":{\"ok\":true}}";
-        ESP_LOGI(BACKEND_TAG, "Enviado JSON (config_ack): %s", ack_payload);
-        backend_ws_send_text(ws, ack_payload);
-        
     } else if (strcmp(event, "reading_ack") == 0) {
         ESP_LOGD(BACKEND_TAG, "Lectura confirmada por servidor");
     } else if (strcmp(event, "auth_error") == 0) {
